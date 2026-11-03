@@ -1,23 +1,38 @@
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../hooks/use-auth.js';
+import { useMe } from '../../hooks/use-me.js';
 import { AssistantWidget } from '../assistant/AssistantWidget.js';
-
-const LINKS = [
-  { to: '/', label: 'Visão geral', end: true },
-  { to: '/produtos', label: 'Produtos', end: false },
-  { to: '/aquisicao', label: 'Aquisição', end: false },
-  { to: '/uso-do-app', label: 'Uso do app', end: false },
-  { to: '/qualidade', label: 'Qualidade', end: false },
-  { to: '/sprint', label: 'Sprint', end: false },
-  { to: '/configuracoes', label: 'Configurações', end: false },
-];
 
 export function AppShell() {
   const { logout } = useAuth();
   const navigate = useNavigate();
+  const { data: me } = useMe();
+  const isAdmin = me?.user.role === 'ADMIN' && !me.viewSession;
+  const links = [
+    ...(me?.modules ?? [])
+      .filter((m) => m.menuPath !== null)
+      .map((m) => ({ to: m.menuPath as string, label: m.label })),
+    ...(isAdmin
+      ? [{ to: '/configuracoes', label: 'Configurações' }]
+      : []),
+  ];
+  const showAssistant = !!me && !me.viewSession && me.modules.some((m) => m.key === 'assistant');
+  const endLogout = () => { logout(); navigate('/login', { replace: true }); };
 
   return (
     <div className="min-h-screen">
+      {me?.viewSession && (
+        <div
+          role="status"
+          className="sticky top-0 z-50 flex items-center justify-center gap-4 px-4 py-2 text-sm font-medium"
+          style={{ backgroundColor: '#F5B700', color: '#1A1A1A' }}
+        >
+          <span>Visualização da equipe Blan — somente leitura</span>
+          <button type="button" onClick={endLogout} className="rounded-md border border-black px-2 py-0.5">
+            Encerrar visualização
+          </button>
+        </div>
+      )}
       <header
         role="banner"
         className="border-b px-6 py-4"
@@ -43,9 +58,9 @@ export function AppShell() {
             </svg>
           </span>
           <nav aria-label="Principal" className="flex flex-wrap gap-1">
-            {LINKS.map((link) => (
+            {links.map((link) => (
               <NavLink
-                key={link.to} to={link.to} end={link.end}
+                key={link.to} to={link.to} end={link.to === '/'}
                 className={({ isActive }) =>
                   `rounded-md px-3 py-1.5 text-sm ${isActive ? 'bg-accent text-white' : ''}`}
                 style={({ isActive }) => (isActive ? undefined : { color: 'var(--text-secondary)' })}
@@ -56,7 +71,7 @@ export function AppShell() {
           </nav>
           <button
             type="button"
-            onClick={() => { logout(); navigate('/login', { replace: true }); }}
+            onClick={endLogout}
             className="ml-auto rounded-md border px-3 py-1.5 text-sm"
             style={{ borderColor: 'var(--hairline)', color: 'var(--text-secondary)' }}
           >
@@ -67,7 +82,7 @@ export function AppShell() {
       <main className="mx-auto max-w-7xl p-6">
         <Outlet />
       </main>
-      <AssistantWidget />
+      {showAssistant && <AssistantWidget />}
     </div>
   );
 }

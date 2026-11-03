@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { useFilters } from '../hooks/use-filters.js';
 import { useMetricBatch, useMetricSeries } from '../hooks/use-metric-series.js';
+import { useMe } from '../hooks/use-me.js';
 import { useTool } from '../hooks/use-tool.js';
 import { PeriodPicker } from '../components/filters/PeriodPicker.js';
 import { SourceFilter } from '../components/filters/SourceFilter.js';
@@ -33,8 +34,18 @@ const percent = new Intl.NumberFormat('pt-BR', { style: 'percent', maximumFracti
 
 export function OverviewPage({ today }: { today: string }) {
   const { filters } = useFilters(today);
+  const { data: me } = useMe();
+  const allowedSources = me?.sources ?? [];
+  const hasModule = (key: string) => me?.modules.some((m) => m.key === key && m.state === 'ready') ?? false;
+  const showApp = hasModule('app_usage');
+  const showQuality = hasModule('quality');
+  const showSprint = hasModule('sprint');
+  const showCommerceStatus = filters.sources.includes('commerce') && allowedSources.includes('commerce');
 
-  const visibleMetrics = HEADLINE_METRICS.filter((metric) => filters.sources.includes(metric.source));
+  // Só pedimos métricas de fontes liberadas ao cliente: o resto seria 403.
+  const visibleMetrics = HEADLINE_METRICS.filter(
+    (metric) => filters.sources.includes(metric.source) && allowedSources.includes(metric.source),
+  );
 
   const queries = useMemo<MetricQueryInput[]>(
     () => visibleMetrics.map((metric) => ({
@@ -42,7 +53,7 @@ export function OverviewPage({ today }: { today: string }) {
     })),
     // `visibleMetrics` deriva de `filters`; depender de `filters` basta e evita
     // recriar o array a cada render.
-    [filters],
+    [filters, me],
   );
 
   const { data, isLoading, error } = useMetricBatch(queries);
@@ -50,20 +61,20 @@ export function OverviewPage({ today }: { today: string }) {
 
   const statusQuery = useTool<StatusGroups>('commerce', 'orders_by_status', {
     from: filters.from, to: filters.to,
-  }, { enabled: filters.sources.includes('commerce') });
+  }, { enabled: showCommerceStatus });
 
   // Pulso dos outros módulos (app, qualidade, sprint) — sempre visível aqui,
   // independente do filtro de fonte acima (que é só sobre faturamento/sessões).
   // Uma visão geral que só mostra loja+analytics não é geral.
   const appUsersQuery = useMetricSeries({
     metricId: 'firebase.active_users', from: filters.from, to: filters.to, granularity: filters.granularity,
-  });
+  }, { enabled: showApp });
   const feedbackQuery = useTool<FeedbackSummary>('quality', 'feedback_by_category', {
     from: filters.from, to: filters.to,
-  });
+  }, { enabled: showQuality });
   const sprintQuery = useTool<SprintSummaryView>('sprint', 'sprint_summary', {
     from: filters.from, to: filters.to,
-  });
+  }, { enabled: showSprint });
   const deliveredTasks = sprintQuery.data?.byStatus.find((s) => s.key === 'ENTREGUE')?.count ?? 0;
   const asError = (value: unknown) => (value instanceof Error ? value : null);
 
@@ -157,32 +168,32 @@ export function OverviewPage({ today }: { today: string }) {
         )}
       </section>
 
-      <section aria-label="Outros módulos">
+      {(showApp || showQuality || showSprint) && <section aria-label="Outros módulos">
         <h3 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Outros módulos</h3>
         <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-3">
-          <KpiCard
+          {showApp && <KpiCard
             label="Usuários ativos (app)"
             unit="count"
             value={appUsersQuery.data?.total ?? 0}
             isLoading={appUsersQuery.isLoading}
             error={asError(appUsersQuery.error)}
-          />
-          <KpiCard
+          />}
+          {showQuality && <KpiCard
             label="Feedback recebido"
             unit="count"
             value={feedbackQuery.data?.total ?? 0}
             isLoading={feedbackQuery.isLoading}
             error={asError(feedbackQuery.error)}
-          />
-          <KpiCard
+          />}
+          {showSprint && <KpiCard
             label="Tarefas entregues (sprint)"
             unit="count"
             value={deliveredTasks}
             isLoading={sprintQuery.isLoading}
             error={asError(sprintQuery.error)}
-          />
+          />}
         </div>
-      </section>
+      </section>}
     </div>
   );
 }

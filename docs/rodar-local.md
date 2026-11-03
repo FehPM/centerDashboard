@@ -38,17 +38,19 @@ Edite com estes valores para rodar sem credenciais externas:
 DATABASE_URL="postgresql://center:center@localhost:5432/center?schema=public"
 REDIS_URL="redis://localhost:6379"
 JWT_SECRET="dev-jwt-secret-com-no-minimo-32-caracteres"
+OPERATOR_JWT_SECRET="dev-operator-secret-diferente-com-32-caracteres"
 PII_PEPPER="dev-pii-pepper-com-no-minimo-32-caracteres"
 CREDENTIALS_ENCRYPTION_KEY="0000000000000000000000000000000000000000000000000000000000000000"
 MOCK_EXTERNAL_APIS="true"
 UAPPI_BASE_URL="https://api.uappi.com.br"
 GA4_CREDENTIALS_JSON=""
 ANTHROPIC_API_KEY="placeholder"
-WHATSAPP_APP_SECRET="placeholder"
-WHATSAPP_VERIFY_TOKEN="placeholder"
-WHATSAPP_ACCESS_TOKEN="placeholder"
-WHATSAPP_PHONE_NUMBER_ID="placeholder"
 ```
+
+⚠️ **`OPERATOR_JWT_SECRET` é obrigatória** desde a arquitetura multi-tenant: é
+o segredo dos tokens dos operadores da Blan no back-office. Precisa de 32+
+caracteres e **não pode ser igual** ao `JWT_SECRET` — sem ela, ou igual a ele,
+a API, o sync e os scripts não sobem. Gere com `openssl rand -hex 32`.
 
 ⚠️ `JWT_SECRET` e `PII_PEPPER` precisam de 32+ caracteres;
 `CREDENTIALS_ENCRYPTION_KEY` de exatamente 64 hex (`openssl rand -hex 32`).
@@ -56,8 +58,9 @@ WHATSAPP_PHONE_NUMBER_ID="placeholder"
 ⚠️ Só a string literal `"true"` liga o modo mock. `1`, `yes` ou `True` viram
 `false` em silêncio.
 
-⚠️ `ANTHROPIC_API_KEY` e as quatro `WHATSAPP_*` são obrigatórias **mesmo em modo
-mock** — a API não sobe sem elas. Placeholders bastam para o painel.
+⚠️ `ANTHROPIC_API_KEY` é obrigatória **mesmo em modo mock** — a API não sobe
+sem ela. Um placeholder basta para o painel. As `WHATSAPP_*` são opcionais: sem
+elas o canal de WhatsApp (fora do MVP) fica desligado.
 
 ## 3. Carregar o `.env` no terminal
 

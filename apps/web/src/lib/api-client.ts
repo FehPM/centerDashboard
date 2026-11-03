@@ -86,8 +86,20 @@ export interface IntegrationsView {
   integrations: IntegrationStatusItem[];
 }
 
+export interface ModuleView {
+  key: string; label: string; menuPath: string | null; state: 'ready' | 'awaiting_setup';
+}
+
+export interface MeView {
+  user: { id: string; name: string; email: string; role: 'ADMIN' | 'MEMBER'; mustChangePassword: boolean };
+  organization: { id: string; name: string };
+  modules: ModuleView[];
+  sources: MetricSource[];
+  viewSession: boolean;
+}
+
 export class ApiError extends Error {
-  constructor(public readonly status: number, message: string) {
+  constructor(public readonly status: number, message: string, public readonly code?: string) {
     super(message);
     this.name = 'ApiError';
   }
@@ -119,14 +131,17 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     // Token expirado: limpamos aqui para que o guard redirecione sem cada tela
     // ter de tratar 401 individualmente.
     if (response.status === 401) setAuthToken(null);
-    const body = (await response.json().catch(() => ({}))) as { message?: string };
-    throw new ApiError(response.status, body.message ?? `requisição falhou (${response.status})`);
+    const body = (await response.json().catch(() => ({}))) as { message?: string; error?: string };
+    throw new ApiError(response.status, body.message ?? `requisição falhou (${response.status})`, body.error);
   }
 
   return (await response.json()) as T;
 }
 
 export const apiClient = {
+  getMe(): Promise<MeView> {
+    return request<MeView>('/auth/me');
+  },
   login(email: string, password: string) {
     return request<{ token: string; user: { id: string; name: string; email: string; role: string } }>(
       '/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) },

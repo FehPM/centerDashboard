@@ -1,5 +1,8 @@
 import { Navigate, Route, Routes } from 'react-router-dom';
 import { AppShell } from './components/layout/AppShell.js';
+import { RequireModule, RequireAdmin } from './components/layout/RequireModule.js';
+import { ViewSessionPage } from './pages/ViewSessionPage.js';
+import { HomeRoute } from './components/layout/HomeRoute.js';
 import { RequireAuth } from './components/layout/RequireAuth.js';
 import { LoginPage } from './pages/LoginPage.js';
 import { OverviewPage } from './pages/OverviewPage.js';
@@ -17,15 +20,16 @@ export function App() {
   return (
     <Routes>
       <Route path="/login" element={<LoginPage />} />
+      <Route path="/view-session" element={<ViewSessionPage />} />
       <Route element={<RequireAuth />}>
         <Route element={<AppShell />}>
-          <Route path="/" element={<OverviewPage today={today} />} />
-          <Route path="/produtos" element={<ProductsPage today={today} />} />
-          <Route path="/aquisicao" element={<AcquisitionPage today={today} />} />
-          <Route path="/uso-do-app" element={<AppUsagePage today={today} />} />
-          <Route path="/qualidade" element={<AppQualityPage today={today} />} />
-          <Route path="/sprint" element={<SprintPage today={today} />} />
-          <Route path="/configuracoes" element={<SettingsPage />} />
+          <Route path="/" element={<HomeRoute overview={<OverviewPage today={today} />} />} />
+          <Route path="/produtos" element={<RequireModule moduleKey="products"><ProductsPage today={today} /></RequireModule>} />
+          <Route path="/aquisicao" element={<RequireModule moduleKey="acquisition"><AcquisitionPage today={today} /></RequireModule>} />
+          <Route path="/uso-do-app" element={<RequireModule moduleKey="app_usage"><AppUsagePage today={today} /></RequireModule>} />
+          <Route path="/qualidade" element={<RequireModule moduleKey="quality"><AppQualityPage today={today} /></RequireModule>} />
+          <Route path="/sprint" element={<RequireModule moduleKey="sprint"><SprintPage today={today} /></RequireModule>} />
+          <Route path="/configuracoes" element={<RequireAdmin><SettingsPage /></RequireAdmin>} />
         </Route>
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
