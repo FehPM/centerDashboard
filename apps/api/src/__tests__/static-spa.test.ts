@@ -32,7 +32,7 @@ async function buildTestServer(webRoot: string) {
       gateway: { listMetrics: jest.fn(async () => []) } as unknown as MetricGateway,
       pseudonymizer: new Pseudonymizer(testConfig.piiPepper),
       secretBox: new SecretBox(testConfig.credentialsEncryptionKey),
-      queue: { enqueue: jest.fn(async () => {}) },
+      queue: { enqueue: jest.fn(async () => {}) }, connectors: {} as never,
     },
     { webRoot },
   );

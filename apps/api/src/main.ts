@@ -9,6 +9,7 @@ import { McpPool, MetricGateway, RedisCacheStore, type McpServerConfig } from '@
 import { Pseudonymizer } from '@center/pii';
 import { SecretBox } from '@center/secrets';
 import { loadConfig } from './config.js';
+import { createConnectorRegistry } from '@center/connectors';
 import { buildServer } from './server.js';
 import { BullMessageQueue } from './whatsapp/queue.js';
 
@@ -75,6 +76,7 @@ const app = await buildServer({
   pseudonymizer: new Pseudonymizer(config.piiPepper),
   secretBox,
   queue,
+  connectors: createConnectorRegistry({ uappiBaseUrl: config.uappiBaseUrl, mock: config.mockExternalApis }),
 });
 
 async function shutdown(signal: string): Promise<void> {

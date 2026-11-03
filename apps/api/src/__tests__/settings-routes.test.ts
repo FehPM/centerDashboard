@@ -27,7 +27,7 @@ async function setup(role: 'ADMIN' | 'MEMBER', integrations: unknown[] = [], syn
     gateway: {} as unknown as MetricGateway,
     pseudonymizer: new Pseudonymizer(testConfig.piiPepper),
     secretBox,
-    queue: { enqueue: jest.fn(async () => {}) },
+    queue: { enqueue: jest.fn(async () => {}) }, connectors: {} as never,
   });
   const login = await app.inject({
     method: 'POST', url: '/auth/login',

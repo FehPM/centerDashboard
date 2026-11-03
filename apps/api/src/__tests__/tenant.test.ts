@@ -32,10 +32,10 @@ describe('resolveTenant', () => {
 
   it('never includes secrets', async () => {
     const prisma = fakePrisma({ id: 'org_1' }, [
-      { kind: 'WEB_ANALYTICS', status: 'OK', config: { propertyId: '111' }, secrets: 'v1:deadbeef' },
+      { kind: 'WEB_ANALYTICS', status: 'OK', config: { propertyId: '111' }, secrets: 'v1.deadbeef' },
     ]);
     const tenant = await resolveTenant(prisma, 'org_1');
-    expect(JSON.stringify(tenant)).not.toContain('v1:');
+    for (const forbidden of ['v1.', 'v1:', 'deadbeef']) expect(JSON.stringify(tenant)).not.toContain(forbidden);
     const select = (prisma.integration.findMany as jest.Mock).mock.calls[0]![0].select;
     expect(select).not.toHaveProperty('secrets');
   });

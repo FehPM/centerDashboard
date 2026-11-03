@@ -50,7 +50,7 @@ async function setup(config: typeof testConfig = testConfig) {
     config, prisma,
     gateway: { listMetrics: jest.fn(async () => []) } as unknown as MetricGateway,
     pseudonymizer: new Pseudonymizer(testConfig.piiPepper),
-    secretBox, queue: { enqueue: jest.fn(async () => {}) },
+    secretBox, queue: { enqueue: jest.fn(async () => {}) }, connectors: {} as never,
   });
   return { app, operatorRow, auditCreate, secretBox, prisma };
 }

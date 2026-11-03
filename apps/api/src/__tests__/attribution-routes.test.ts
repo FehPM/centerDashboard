@@ -33,7 +33,7 @@ async function build(prisma: PrismaClient) {
   return buildServer({
     config, prisma, pseudonymizer, secretBox,
     gateway: {} as never,
-    queue: { enqueue: jest.fn(async () => {}) },
+    queue: { enqueue: jest.fn(async () => {}) }, connectors: {} as never,
   });
 }
 

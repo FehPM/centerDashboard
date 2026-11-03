@@ -11,7 +11,7 @@ async function build() {
     pseudonymizer: new Pseudonymizer(config.piiPepper),
     secretBox: new SecretBox(config.credentialsEncryptionKey),
     gateway: {} as never,
-    queue: { enqueue: jest.fn(async () => {}) },
+    queue: { enqueue: jest.fn(async () => {}) }, connectors: {} as never,
   });
 }
 

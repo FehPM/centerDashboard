@@ -60,7 +60,7 @@ async function setup(organizationId = 'org_1') {
     config: testConfig, prisma, gateway,
     pseudonymizer: new Pseudonymizer(testConfig.piiPepper),
     secretBox: new SecretBox(testConfig.credentialsEncryptionKey),
-    queue: { enqueue: jest.fn(async () => {}) },
+    queue: { enqueue: jest.fn(async () => {}) }, connectors: {} as never,
   });
   const login = await app.inject({
     method: 'POST', url: '/auth/login',

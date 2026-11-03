@@ -49,7 +49,7 @@ async function setup(overrides: Record<string, unknown> = {}) {
     config: testConfig, prisma,
     gateway: { listMetrics: jest.fn(async () => []) } as unknown as MetricGateway,
     pseudonymizer: new Pseudonymizer(testConfig.piiPepper),
-    secretBox: new SecretBox(testConfig.credentialsEncryptionKey), queue: { enqueue: jest.fn(async () => {}) },
+    secretBox: new SecretBox(testConfig.credentialsEncryptionKey), queue: { enqueue: jest.fn(async () => {}) }, connectors: {} as never,
   });
   return { app, prisma, auditCreate, moduleUpsert };
 }
