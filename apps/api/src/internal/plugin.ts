@@ -2,6 +2,8 @@ import type { FastifyInstance } from 'fastify';
 import jwt, { type JWT, type VerifyOptions } from '@fastify/jwt';
 import type { AppDeps } from '../deps.js';
 import { registerOperatorAuthRoutes } from './auth/routes.js';
+import { registerOrganizationRoutes } from './organizations.js';
+import { registerModuleRoutes } from './modules.js';
 
 export interface OperatorPayload { operatorId: string; stage: 'enroll' | 'mfa' | 'session' }
 
@@ -31,5 +33,7 @@ export async function registerInternal(app: FastifyInstance, deps: AppDeps): Pro
       verify: { allowedAud: 'operator', requiredClaims: ['aud'] },
     });
     await registerOperatorAuthRoutes(scope, deps);
+    await registerOrganizationRoutes(scope, deps);
+    await registerModuleRoutes(scope, deps);
   }, { prefix: '/internal' });
 }
