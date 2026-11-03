@@ -12,6 +12,7 @@ import { registerMetricRoutes } from './routes/metrics.js';
 import { registerAnalysisRoutes } from './routes/analysis.js';
 import { registerAttributionRoutes } from './routes/attribution.js';
 import { registerSettingsRoutes } from './routes/settings.js';
+import { registerUserRoutes } from './routes/users.js';
 import { registerAgentRoutes } from './routes/agent.js';
 import { registerWhatsAppRoutes } from './whatsapp/routes.js';
 import { registerLinkRoutes } from './whatsapp/link-routes.js';
@@ -106,6 +107,7 @@ export async function buildServer(deps: AppDeps, opts: { webRoot?: string } = {}
   await registerAnalysisRoutes(app, deps);
   await registerAttributionRoutes(app, deps);
   await registerSettingsRoutes(app, deps);
+  await registerUserRoutes(app, deps);
   await registerAgentRoutes(app, deps);
   // Desativado a pedido do usuário (2026-09-30): o webhook público
   // `/webhooks/whatsapp` exige que a Meta alcance este servidor pela
