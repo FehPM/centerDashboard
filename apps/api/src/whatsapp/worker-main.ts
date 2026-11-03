@@ -11,6 +11,11 @@ import { CloudApiClient } from './cloud-api-client.js';
 import { createWhatsAppWorker } from './worker.js';
 
 const config = loadConfig(process.env);
+if (config.whatsapp === null) {
+  console.log('WhatsApp desativado: variáveis WHATSAPP_* ausentes');
+  process.exit(0);
+}
+const whatsappConfig = config.whatsapp;
 const prisma = new PrismaClient();
 // BullMQ exige maxRetriesPerRequest: null na conexão do worker.
 const redis = new Redis(config.redisUrl, { maxRetriesPerRequest: null });
@@ -33,7 +38,7 @@ const mcpServers: McpServerConfig[] = [
 
 const pool = await McpPool.spawn(mcpServers);
 const gateway = new MetricGateway(pool, new RedisCacheStore(redis));
-const cloudApi = new CloudApiClient(config.whatsapp);
+const cloudApi = new CloudApiClient(whatsappConfig);
 
 const worker = createWhatsAppWorker({ prisma, gateway, cloudApi, config }, redis);
 

@@ -22,11 +22,31 @@ const EnvSchema = z.object({
   // a string "false". Por isso a comparação explícita: só a literal "true" vira
   // true, qualquer outra coisa (inclusive lixo) vira false.
   MOCK_EXTERNAL_APIS: z.string().default('false').transform((v) => v === 'true'),
-  WHATSAPP_APP_SECRET: z.string().min(1),
-  WHATSAPP_VERIFY_TOKEN: z.string().min(1),
-  WHATSAPP_ACCESS_TOKEN: z.string().min(1),
-  WHATSAPP_PHONE_NUMBER_ID: z.string().min(1),
+  // Segredo do mundo do operador (back-office). Precisa ser distinto de JWT_SECRET:
+  // o `aud` já separa os tokens, mas segredos diferentes impedem que um vazamento
+  // de um lado valha no outro.
+  OPERATOR_JWT_SECRET: z.string().min(32, 'OPERATOR_JWT_SECRET precisa de ao menos 32 caracteres'),
+  // Origens permitidas no CORS: painel do cliente e back-office da Blan.
+  PANEL_ORIGIN: z.string().url().default('http://localhost:5173'),
+  BACKOFFICE_ORIGIN: z.string().url().default('http://localhost:5174'),
+  // Token global da Blan para o Monday (por cliente só o boardId).
+  MONDAY_API_TOKEN: z.string().default(''),
+  // WhatsApp é opcional: qualquer variável vazia desliga a integração.
+  WHATSAPP_APP_SECRET: z.string().default(''),
+  WHATSAPP_VERIFY_TOKEN: z.string().default(''),
+  WHATSAPP_ACCESS_TOKEN: z.string().default(''),
+  WHATSAPP_PHONE_NUMBER_ID: z.string().default(''),
+}).refine((e) => e.OPERATOR_JWT_SECRET !== e.JWT_SECRET, {
+  path: ['OPERATOR_JWT_SECRET'],
+  message: 'OPERATOR_JWT_SECRET precisa ser diferente de JWT_SECRET',
 });
+
+export interface WhatsAppConfig {
+  appSecret: string;
+  verifyToken: string;
+  accessToken: string;
+  phoneNumberId: string;
+}
 
 export interface AppConfig {
   port: number;
@@ -42,12 +62,12 @@ export interface AppConfig {
   syncIntervalMinutes: number;
   syncBackfillDays: number;
   mockExternalApis: boolean;
-  whatsapp: {
-    appSecret: string;
-    verifyToken: string;
-    accessToken: string;
-    phoneNumberId: string;
-  };
+  operatorJwtSecret: string;
+  panelOrigin: string;
+  backofficeOrigin: string;
+  mondayApiToken: string;
+  /** `null` quando qualquer WHATSAPP_* está vazia: a integração fica desligada. */
+  whatsapp: WhatsAppConfig | null;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv | Record<string, string | undefined>): AppConfig {
@@ -59,6 +79,7 @@ export function loadConfig(env: NodeJS.ProcessEnv | Record<string, string | unde
     throw new Error(`Configuração inválida — ${details}`);
   }
   const e = parsed.data;
+  const whatsapp = [e.WHATSAPP_APP_SECRET, e.WHATSAPP_VERIFY_TOKEN, e.WHATSAPP_ACCESS_TOKEN, e.WHATSAPP_PHONE_NUMBER_ID];
   return {
     port: e.PORT,
     databaseUrl: e.DATABASE_URL,
@@ -73,11 +94,17 @@ export function loadConfig(env: NodeJS.ProcessEnv | Record<string, string | unde
     syncIntervalMinutes: e.SYNC_INTERVAL_MINUTES,
     syncBackfillDays: e.SYNC_BACKFILL_DAYS,
     mockExternalApis: e.MOCK_EXTERNAL_APIS,
-    whatsapp: {
-      appSecret: e.WHATSAPP_APP_SECRET,
-      verifyToken: e.WHATSAPP_VERIFY_TOKEN,
-      accessToken: e.WHATSAPP_ACCESS_TOKEN,
-      phoneNumberId: e.WHATSAPP_PHONE_NUMBER_ID,
-    },
+    operatorJwtSecret: e.OPERATOR_JWT_SECRET,
+    panelOrigin: e.PANEL_ORIGIN,
+    backofficeOrigin: e.BACKOFFICE_ORIGIN,
+    mondayApiToken: e.MONDAY_API_TOKEN,
+    whatsapp: whatsapp.every((v) => v !== '')
+      ? {
+        appSecret: e.WHATSAPP_APP_SECRET,
+        verifyToken: e.WHATSAPP_VERIFY_TOKEN,
+        accessToken: e.WHATSAPP_ACCESS_TOKEN,
+        phoneNumberId: e.WHATSAPP_PHONE_NUMBER_ID,
+      }
+      : null,
   };
 }

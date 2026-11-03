@@ -15,10 +15,12 @@ export async function registerWhatsAppRoutes(app: FastifyInstance, deps: AppDeps
   // devolver o challenge como texto puro.
   app.get('/webhooks/whatsapp', async (request, reply) => {
     const parsed = VerifyQuerySchema.safeParse(request.query);
+    const whatsapp = deps.config.whatsapp;
     if (
-      !parsed.success
+      !whatsapp
+      || !parsed.success
       || parsed.data['hub.mode'] !== 'subscribe'
-      || parsed.data['hub.verify_token'] !== deps.config.whatsapp.verifyToken
+      || parsed.data['hub.verify_token'] !== whatsapp.verifyToken
     ) {
       return reply.status(403).send('forbidden');
     }
@@ -26,13 +28,15 @@ export async function registerWhatsAppRoutes(app: FastifyInstance, deps: AppDeps
   });
 
   app.post('/webhooks/whatsapp', async (request, reply) => {
+    const whatsapp = deps.config.whatsapp;
+    if (!whatsapp) return reply.status(404).send({ error: 'not_found', message: 'rota não encontrada' });
     const rawBody = (request as FastifyRequest & { rawBody?: Buffer }).rawBody ?? Buffer.alloc(0);
     const signature = request.headers['x-hub-signature-256'];
 
     if (!verifySignature(
       rawBody,
       typeof signature === 'string' ? signature : undefined,
-      deps.config.whatsapp.appSecret,
+      whatsapp.appSecret,
     )) {
       request.log.warn('webhook do WhatsApp com assinatura inválida');
       return reply.status(401).send({ error: 'unauthorized' });

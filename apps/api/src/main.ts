@@ -48,7 +48,7 @@ const mcpServers: McpServerConfig[] = [
     source: 'firebase',
     command: process.execPath,
     args: ['../../packages/mcp-firebase/dist/main.js'],
-    env: { GA4_APP_CREDENTIALS_JSON: config.ga4AppCredentialsJson, MOCK_EXTERNAL_APIS: String(config.mockExternalApis) },
+    env: { GA4_CREDENTIALS_JSON: config.ga4CredentialsJson, GA4_APP_CREDENTIALS_JSON: config.ga4AppCredentialsJson, MOCK_EXTERNAL_APIS: String(config.mockExternalApis) },
   },
   {
     source: 'quality',

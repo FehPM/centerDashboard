@@ -15,7 +15,6 @@ import { registerSettingsRoutes } from './routes/settings.js';
 import { registerUserRoutes } from './routes/users.js';
 import { registerAgentRoutes } from './routes/agent.js';
 import { registerWhatsAppRoutes } from './whatsapp/routes.js';
-import { registerLinkRoutes } from './whatsapp/link-routes.js';
 
 // No runtime empacotado, este arquivo compila para apps/api/dist/server.js;
 // dois níveis acima (apps/api/dist -> apps/api -> apps/) e então para
@@ -40,7 +39,7 @@ const DEFAULT_WEB_ROOT = join(dirname(fileURLToPath(import.meta.url)), '../../we
 // react-router (ver apps/web/src/App.tsx: '/', '/login', '/produtos',
 // '/aquisicao', '/configuracoes') começa com um destes prefixos, então este
 // matching mais amplo não engole rota nenhuma do dashboard.
-const RESERVED_PREFIXES = ['/api', '/auth', '/public', '/webhooks'];
+const RESERVED_PREFIXES = ['/api', '/auth', '/public', '/webhooks', '/internal'];
 const RESERVED_EXACT = new Set(['/health']);
 
 function isReservedPath(pathname: string): boolean {
@@ -68,7 +67,18 @@ export async function buildServer(deps: AppDeps, opts: { webRoot?: string } = {}
     }
   });
 
-  await app.register(cors, { origin: true, credentials: true });
+  // CORS por área (design multi-tenant): o script de atribuição roda no site da
+  // loja (qualquer origem); /internal é só do back-office; o resto, só do painel.
+  await app.register(cors, {
+    delegator: (request, callback) => {
+      const pathname = (request.url.split('?')[0] ?? request.url).toLowerCase();
+      if (pathname.startsWith('/public')) return callback(null, { origin: true, credentials: true });
+      if (pathname.startsWith('/internal')) {
+        return callback(null, { origin: [deps.config.backofficeOrigin], credentials: true });
+      }
+      return callback(null, { origin: [deps.config.panelOrigin], credentials: true });
+    },
+  });
   // `aud` separa os tokens do cliente dos do operador (backoffice).
   await app.register(jwt, {
     secret: deps.config.jwtSecret,
@@ -112,9 +122,10 @@ export async function buildServer(deps: AppDeps, opts: { webRoot?: string } = {}
   // Desativado a pedido do usuário (2026-09-30): o webhook público
   // `/webhooks/whatsapp` exige que a Meta alcance este servidor pela
   // internet — enquanto não há decisão de expor isso, a integração fica
-  // fora do ar. Reative descomentando esta linha quando for usar o bot.
+  // fora do ar. WhatsApp está fora do MVP multi-tenant (ver
+  // docs/superpowers/specs/2026-10-29-multi-tenant-modular-design.md);
+  // as rotas de vínculo (link-code) também deixaram de ser registradas.
   // await registerWhatsAppRoutes(app, deps);
-  await registerLinkRoutes(app, deps);
 
   // Serve o dashboard React (apps/web/dist) na mesma origem que a API — é o
   // que `apps/web/src/lib/api-client.ts` já assume (paths relativos, sem

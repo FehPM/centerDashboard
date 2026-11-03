@@ -167,4 +167,12 @@ describe('static dashboard + SPA fallback', () => {
     expect(response.body).toContain('dashboard');
     await app.close();
   });
+
+  it('GET /internal/whatever returns JSON 404, not index.html', async () => {
+    const app = await buildTestServer(webRoot);
+    const response = await app.inject({ method: 'GET', url: '/internal/whatever' });
+    expect(response.statusCode).toBe(404);
+    expect(response.headers['content-type']).toMatch(/application\/json/);
+    await app.close();
+  });
 });

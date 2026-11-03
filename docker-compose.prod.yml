@@ -51,6 +51,7 @@ services:
     restart: unless-stopped
 
   whatsapp:
+    profiles: ["whatsapp"]
     build: .
     env_file: [.env]
     environment:
