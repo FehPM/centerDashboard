@@ -1,6 +1,10 @@
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import { GranularitySchema, IsoDateSchema, MetricSourceSchema, type MetricQuery, type MetricSource } from '@center/shared';
+import { decideSource } from '@center/entitlements';
+import { sourceOf } from '@center/mcp-core';
+import { getAccess, replyForDecision } from '../authz/guards.js';
+import { scopeGateway } from '../authz/scoped-gateway.js';
 import { resolveTenant } from '../tenant.js';
 import { assertRange, assertRangesInBody, BadRequestError } from '../range.js';
 import type { AppDeps } from '../deps.js';
@@ -75,17 +79,28 @@ export function upstreamError(reply: FastifyReply, error: unknown) {
 }
 
 export async function registerMetricRoutes(app: FastifyInstance, deps: AppDeps): Promise<void> {
-  app.get('/api/metrics/catalog', { preHandler: app.authenticate }, async (_request, reply) => {
+  app.get('/api/metrics/catalog', { preHandler: app.authenticate, config: { readonlySafe: true } }, async (request, reply) => {
     try {
-      return reply.send({ metrics: await deps.gateway.listMetrics() });
+      const access = await getAccess(request, deps.prisma);
+      return reply.send({ metrics: await scopeGateway(deps.gateway, access.sources).listMetrics() });
     } catch (error) {
       return upstreamError(reply, error);
     }
   });
 
-  app.post('/api/metrics/query', { preHandler: app.authenticate }, async (request, reply) => {
+  app.post('/api/metrics/query', { preHandler: app.authenticate, config: { readonlySafe: true } }, async (request, reply) => {
     const parsed = QueryBodySchema.safeParse(request.body);
     if (!parsed.success) return badRequest(reply, parsed.error.issues[0]?.message ?? 'corpo inválido');
+
+    let source: MetricSource;
+    try {
+      source = sourceOf(parsed.data.metricId);
+    } catch (error) {
+      return badRequest(reply, error instanceof Error ? error.message : 'metricId inválido');
+    }
+    const access = await getAccess(request, deps.prisma);
+    const refusal = replyForDecision(reply, decideSource(source, access.modules, access.integrations));
+    if (refusal) return refusal;
 
     try {
       assertRange(parsed.data);
@@ -98,11 +113,24 @@ export async function registerMetricRoutes(app: FastifyInstance, deps: AppDeps):
     }
   });
 
-  app.post('/api/metrics/batch', { preHandler: app.authenticate }, async (request, reply) => {
+  app.post('/api/metrics/batch', { preHandler: app.authenticate, config: { readonlySafe: true } }, async (request, reply) => {
     const parsed = BatchBodySchema.safeParse(request.body);
     if (!parsed.success) {
       return badRequest(reply, `queries precisa ter entre 1 e ${MAX_BATCH_SIZE} itens`);
     }
+
+    let sources: MetricSource[];
+    try {
+      sources = parsed.data.queries.map((item) => sourceOf(item.metricId));
+    } catch (error) {
+      return badRequest(reply, error instanceof Error ? error.message : 'metricId inválido');
+    }
+    const access = await getAccess(request, deps.prisma);
+    const decisions = sources.map((s) => decideSource(s, access.modules, access.integrations));
+    // forbidden vence pending; em ambos os casos o gateway não é chamado.
+    const worst = decisions.includes('forbidden') ? 'forbidden' : decisions.includes('pending') ? 'pending' : 'allowed';
+    const refusal = replyForDecision(reply, worst);
+    if (refusal) return refusal;
 
     try {
       for (const item of parsed.data.queries) assertRange(item);
@@ -117,7 +145,7 @@ export async function registerMetricRoutes(app: FastifyInstance, deps: AppDeps):
 
   app.post<{ Params: { source: string; name: string } }>(
     '/api/tools/:source/:name',
-    { preHandler: app.authenticate },
+    { preHandler: app.authenticate, config: { readonlySafe: true } },
     async (request, reply) => {
       const source = MetricSourceSchema.safeParse(request.params.source);
       if (!source.success) {
@@ -127,6 +155,10 @@ export async function registerMetricRoutes(app: FastifyInstance, deps: AppDeps):
       if (!ALLOWED_TOOLS[source.data].includes(name)) {
         return reply.status(404).send({ error: 'not_found', message: `ferramenta não exposta: ${name}` });
       }
+
+      const access = await getAccess(request, deps.prisma);
+      const refusal = replyForDecision(reply, decideSource(source.data, access.modules, access.integrations));
+      if (refusal) return refusal;
 
       try {
         const tenant = await resolveTenant(deps.prisma, request.auth.organizationId);

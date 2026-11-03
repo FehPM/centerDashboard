@@ -1,5 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
+import { getModule, moduleReadiness } from '@center/entitlements';
+import { getAccess } from '../authz/guards.js';
 import type { AppDeps } from '../deps.js';
 import { hashPassword, verifyPassword } from './password.js';
 import type { AuthPayload } from './jwt.js';
@@ -90,8 +92,31 @@ export async function registerAuthRoutes(app: FastifyInstance, deps: AppDeps): P
   app.get(
     '/auth/me',
     { preHandler: app.authenticate, config: { readonlySafe: true, allowDuringPasswordChange: true } },
-    async (request) => ({
-      userId: request.auth.userId, organizationId: request.auth.organizationId, role: request.auth.role,
-    }),
+    async (request, reply) => {
+      const auth = request.auth;
+      const viewSession = auth.viewedBy !== null;
+      const [access, user, organization] = await Promise.all([
+        getAccess(request, deps.prisma),
+        viewSession
+          ? Promise.resolve(null)
+          : deps.prisma.user.findUnique({ where: { id: auth.userId }, select: { name: true, email: true } }),
+        deps.prisma.organization.findUnique({ where: { id: auth.organizationId }, select: { id: true, name: true } }),
+      ]);
+      if (!organization || (!viewSession && !user)) {
+        return reply.status(401).send({ error: 'unauthorized', message: 'token ausente ou inválido' });
+      }
+      return {
+        user: user
+          ? { id: auth.userId, name: user.name, email: user.email, role: auth.role, mustChangePassword: auth.mustChangePassword }
+          : { id: auth.userId, name: 'Equipe Blan (visualização)', email: '', role: 'ADMIN', mustChangePassword: false },
+        organization: { id: organization.id, name: organization.name },
+        modules: access.modules.map((key) => {
+          const { label, menuPath } = getModule(key);
+          return { key, label, menuPath, state: moduleReadiness(key, access.integrations) };
+        }),
+        sources: [...access.sources],
+        viewSession,
+      };
+    },
   );
 }

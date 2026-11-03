@@ -33,12 +33,25 @@ async function setup(organizationId = 'org_1') {
     },
     organization: {
       findUnique: jest.fn(async () => ({
-        id: organizationId, status: 'ACTIVE',
+        id: organizationId, name: 'Loja', status: 'ACTIVE',
       })),
     },
+    // Acesso total: todos os módulos contratados e todas as integrações OK.
+    organizationModule: {
+      findMany: jest.fn(async () => [
+        'overview', 'products', 'acquisition', 'app_usage', 'quality', 'sprint', 'assistant',
+      ].map((moduleKey) => ({
+        moduleKey, status: 'ACTIVE', startsAt: new Date('2020-01-01'), endsAt: null,
+      }))),
+    },
+    userModuleAccess: { findMany: jest.fn(async () => []) },
     integration: {
       findMany: jest.fn(async () => [
-        { kind: 'WEB_ANALYTICS', status: 'OK', config: { propertyId: `prop_${organizationId}` } },
+        { kind: 'COMMERCE', status: 'OK', config: {} },
+        { kind: 'WEB_ANALYTICS', status: 'OK', config: { propertyId: `prop_${organizationId}`, bigQueryDataset: 'ds' } },
+        { kind: 'APP_ANALYTICS', status: 'OK', config: {} },
+        { kind: 'PLAY_STORE', status: 'OK', config: {} },
+        { kind: 'SPRINT_BOARD', status: 'OK', config: {} },
       ]),
     },
   } as unknown as PrismaClient;
@@ -106,7 +119,7 @@ describe('POST /api/metrics/query', () => {
     });
     expect(gateway.queryMetric).toHaveBeenCalledWith({
       ...validQuery,
-      tenant: { organizationId: 'org_1', externalIds: { ga4PropertyId: 'prop_org_1' } },
+      tenant: { organizationId: 'org_1', externalIds: { ga4PropertyId: 'prop_org_1', ga4BigQueryDataset: 'ds' } },
     });
     await app.close();
   });

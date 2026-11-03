@@ -18,8 +18,11 @@ async function buildTestServer(userRow: unknown, orgStatus: 'ACTIVE' | 'SUSPENDE
   const prisma = {
     user: { findUnique: jest.fn(async () => userRow), update: jest.fn(async () => userRow) },
     organization: {
-      findUnique: jest.fn(async () => ({ id: 'org_1', status: orgStatus })),
+      findUnique: jest.fn(async () => ({ id: 'org_1', name: 'Loja', status: orgStatus })),
     },
+    organizationModule: { findMany: jest.fn(async () => []) },
+    userModuleAccess: { findMany: jest.fn(async () => []) },
+    integration: { findMany: jest.fn(async () => []) },
   } as unknown as PrismaClient;
   lastPrisma = prisma;
 
@@ -152,7 +155,13 @@ describe('GET /auth/me', () => {
       method: 'GET', url: '/auth/me',
       headers: { authorization: `Bearer ${login.json().token}` },
     });
-    expect(response.json()).toEqual({ userId: 'user_1', organizationId: 'org_1', role: 'ADMIN' });
+    expect(response.json()).toEqual({
+      user: { id: 'user_1', name: 'Ana', email: 'ana@example.com', role: 'ADMIN', mustChangePassword: false },
+      organization: { id: 'org_1', name: 'Loja' },
+      modules: [],
+      sources: [],
+      viewSession: false,
+    });
     await app.close();
   });
 });

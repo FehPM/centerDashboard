@@ -14,7 +14,7 @@ const CAVEAT =
 export type ImpactVerdict = 'melhorou' | 'piorou' | 'sem-mudanca-relevante' | 'inconclusivo';
 
 export interface VersionImpactInput {
-  gateway: MetricGateway;
+  gateway: Pick<MetricGateway, 'queryBatch' | 'callTool'>;
   tenant: TenantContext;
   version: string;
   releaseDate: string;

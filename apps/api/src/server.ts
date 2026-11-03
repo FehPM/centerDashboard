@@ -88,6 +88,17 @@ export async function buildServer(deps: AppDeps, opts: { webRoot?: string } = {}
     allowList: (request) => request.url === '/health' || request.url.startsWith('/webhooks/whatsapp'),
   });
 
+  // Antes de registrar rotas: o Fastify fixa o handler de erro no momento em que a rota é criada.
+  app.setErrorHandler((error: FastifyError, request, reply) => {
+    const statusCode = error.statusCode ?? 500;
+    if (statusCode >= 500) request.log.error({ err: error }, 'erro não tratado');
+    return reply.status(statusCode).send({
+      error: statusCode >= 500 ? 'internal_error' : 'bad_request',
+      // Nunca vaza mensagem de erro interno para o cliente.
+      message: statusCode >= 500 ? 'erro interno' : error.message,
+    });
+  });
+
   app.get('/health', async () => ({ status: 'ok' }));
 
   await registerAuthRoutes(app, deps);
@@ -132,16 +143,6 @@ export async function buildServer(deps: AppDeps, opts: { webRoot?: string } = {}
       return reply.sendFile('index.html');
     }
     return reply.status(404).send({ error: 'not_found', message: 'rota não encontrada' });
-  });
-
-  app.setErrorHandler((error: FastifyError, request, reply) => {
-    const statusCode = error.statusCode ?? 500;
-    if (statusCode >= 500) request.log.error({ err: error }, 'erro não tratado');
-    return reply.status(statusCode).send({
-      error: statusCode >= 500 ? 'internal_error' : 'bad_request',
-      // Nunca vaza mensagem de erro interno para o cliente.
-      message: statusCode >= 500 ? 'erro interno' : error.message,
-    });
   });
 
   return app;

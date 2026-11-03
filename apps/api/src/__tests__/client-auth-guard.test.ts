@@ -14,11 +14,13 @@ async function setup(beforeReady?: (app: Awaited<ReturnType<typeof buildServer>>
     organizationId: 'org_1', passwordHash: await hashPassword('segredo123'),
     active: true, mustChangePassword: false,
   };
-  const orgRow = { id: 'org_1', status: 'ACTIVE' as 'ACTIVE' | 'SUSPENDED' };
+  const orgRow = { id: 'org_1', name: 'Loja', status: 'ACTIVE' as 'ACTIVE' | 'SUSPENDED' };
   const prisma = {
     user: { findUnique: jest.fn(async () => userRow) },
     organization: { findUnique: jest.fn(async () => orgRow) },
     integration: { findMany: jest.fn(async () => []) },
+    organizationModule: { findMany: jest.fn(async () => []) },
+    userModuleAccess: { findMany: jest.fn(async () => []) },
     syncState: { findUnique: jest.fn(async () => null) },
   } as unknown as PrismaClient;
 
@@ -90,7 +92,7 @@ describe('client auth guard', () => {
     const token = app.jwt.sign({
       userId: 'operator:op_1', organizationId: 'org_1', role: 'ADMIN', viewedBy: 'op_1',
     });
-    const res = await app.inject({ method: 'GET', url: '/api/metrics/catalog', headers: bearer(token) });
+    const res = await app.inject({ method: 'GET', url: '/api/settings/integrations', headers: bearer(token) });
     expect(res.statusCode).toBe(403);
     expect(res.json().error).toBe('readonly_session');
     await app.close();
@@ -127,7 +129,7 @@ describe('client auth guard', () => {
     const token = app.jwt.sign({
       userId: 'operator:op_1', organizationId: 'org_1', role: 'ADMIN', viewedBy: 'op_1',
     });
-    const res = await app.inject({ method: 'GET', url: '/api/metrics/catalog', headers: bearer(token) });
+    const res = await app.inject({ method: 'GET', url: '/api/settings/integrations', headers: bearer(token) });
     expect(res.statusCode).toBe(403);
     expect(info[0]).toBeDefined();
     expect(info[0]).toHaveBeenCalledWith(

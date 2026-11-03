@@ -174,7 +174,9 @@ Regras:
 - **Visão geral** hoje mostra cards de ga4, quality e sprint. Cada card só
   aparece se o usuário puder ver o módulo dono daquela fonte.
 - **`/api/analysis/correlate`** exige as fontes das duas métricas pedidas;
-  **`/api/analysis/app-version-impact`** exige o módulo `app_usage`.
+  **`/api/analysis/app-version-impact`** exige o módulo `app_usage` **e** as
+  fontes que ela consulta (`commerce` e `ga4`), porque cruza a versão do app
+  com receita e usuários.
   *(Decisão de design, não do cliente.)*
 - **Fontes compartilhadas:** uma fonte liberada por qualquer módulo visível
   está liberada. `commerce` aparece em vários módulos de propósito.

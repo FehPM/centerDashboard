@@ -3,6 +3,9 @@ import type {
 } from '@center/shared';
 import type { MetricGateway } from './gateway.js';
 
+/** Parte mínima do gateway que a correlação usa (aceita um gateway restrito por fonte). */
+export type CorrelationGateway = Pick<MetricGateway, 'queryBatch'>;
+
 export type CorrelationStrength = 'forte' | 'moderada' | 'fraca' | 'desprezivel' | 'indeterminada';
 export type CorrelationDirection = 'positiva' | 'negativa' | 'indefinida';
 
@@ -84,7 +87,7 @@ export interface CorrelationResult {
  * nenhum servidor conheça o outro.
  */
 export async function correlateMetrics(
-  gateway: MetricGateway,
+  gateway: CorrelationGateway,
   input: CorrelateInput,
 ): Promise<CorrelationResult> {
   if (input.metricIdA === input.metricIdB) {
