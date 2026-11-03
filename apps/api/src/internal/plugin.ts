@@ -8,6 +8,7 @@ import { registerIntegrationRoutes } from './integrations.js';
 import { registerInternalUserRoutes } from './users.js';
 import { registerAuditRoutes } from './audit-routes.js';
 import { registerOperatorRoutes } from './operators.js';
+import { registerViewSessionRoutes } from './view-session.js';
 
 export interface OperatorPayload { operatorId: string; stage: 'enroll' | 'mfa' | 'session' }
 
@@ -43,5 +44,6 @@ export async function registerInternal(app: FastifyInstance, deps: AppDeps): Pro
     await registerInternalUserRoutes(scope, deps);
     await registerAuditRoutes(scope, deps);
     await registerOperatorRoutes(scope, deps);
+    await registerViewSessionRoutes(scope, deps);
   }, { prefix: '/internal' });
 }
