@@ -116,25 +116,40 @@ export function getAuthToken(): string | null {
   return localStorage.getItem(TOKEN_KEY);
 }
 
-async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+export interface UserView {
+  id: string; name: string; email: string; role: 'ADMIN' | 'MEMBER';
+  active: boolean; mustChangePassword: boolean; modules: string[];
+}
+export interface CreateUserInput {
+  name: string; email: string; role: 'ADMIN' | 'MEMBER'; temporaryPassword: string; modules: string[];
+}
+export interface UpdateUserInput {
+  name?: string; role?: 'ADMIN' | 'MEMBER'; active?: boolean; modules?: string[];
+}
+
+async function request<T>(
+  path: string, init: RequestInit & { keepTokenOn401?: boolean } = {},
+): Promise<T> {
+  const { keepTokenOn401, ...fetchInit } = init;
   const token = getAuthToken();
   const response = await fetch(path, {
-    ...init,
+    ...fetchInit,
     headers: {
       'content-type': 'application/json',
       ...(token ? { authorization: `Bearer ${token}` } : {}),
-      ...init.headers,
+      ...fetchInit.headers,
     },
   });
 
   if (!response.ok) {
     // Token expirado: limpamos aqui para que o guard redirecione sem cada tela
     // ter de tratar 401 individualmente.
-    if (response.status === 401) setAuthToken(null);
+    if (response.status === 401 && !keepTokenOn401) setAuthToken(null);
     const body = (await response.json().catch(() => ({}))) as { message?: string; error?: string };
     throw new ApiError(response.status, body.message ?? `requisição falhou (${response.status})`, body.error);
   }
 
+  if (response.status === 204) return undefined as T;
   return (await response.json()) as T;
 }
 
@@ -188,5 +203,26 @@ export const apiClient = {
 
   getIntegrations(): Promise<IntegrationsView> {
     return request('/api/settings/integrations');
+  },
+
+  listUsers(): Promise<UserView[]> {
+    return request('/api/users');
+  },
+  createUser(input: CreateUserInput): Promise<UserView> {
+    return request('/api/users', { method: 'POST', body: JSON.stringify(input) });
+  },
+  updateUser(id: string, input: UpdateUserInput): Promise<UserView> {
+    return request(`/api/users/${id}`, { method: 'PATCH', body: JSON.stringify(input) });
+  },
+  resetUserPassword(id: string, temporaryPassword: string): Promise<void> {
+    return request(`/api/users/${id}/reset-password`, {
+      method: 'POST', body: JSON.stringify({ temporaryPassword }),
+    });
+  },
+  /** Senha atual errada volta 401: não pode derrubar a sessão. */
+  changePassword(currentPassword: string, newPassword: string): Promise<void> {
+    return request('/auth/password', {
+      method: 'POST', body: JSON.stringify({ currentPassword, newPassword }), keepTokenOn401: true,
+    });
   },
 };

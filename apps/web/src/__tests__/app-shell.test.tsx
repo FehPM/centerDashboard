@@ -36,6 +36,7 @@ describe('AppShell', () => {
     mswServer.use(meHandler());
     shell();
     expect(await screen.findByRole('link', { name: 'Configurações' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Usuários' })).toBeInTheDocument();
   });
 
   it('assistant widget hidden without assistant module', async () => {

@@ -7,7 +7,7 @@ export function RequireAuth() {
   const location = useLocation();
   const navigate = useNavigate();
   const { logout } = useAuth();
-  const { error, refetch } = useMe();
+  const { data: me, error, refetch } = useMe();
 
   // Lemos o token direto do storage: o cliente de API o remove em qualquer 401,
   // então uma sessão expirada derruba o guard sem precisar de estado global.
@@ -43,6 +43,10 @@ export function RequireAuth() {
         </div>
       </div>
     );
+  }
+  if (!me) return <p role="status" className="p-6 text-sm">Carregando…</p>;
+  if (me.user.mustChangePassword && location.pathname !== '/trocar-senha') {
+    return <Navigate to="/trocar-senha" replace />;
   }
   return <Outlet />;
 }

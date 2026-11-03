@@ -13,7 +13,7 @@ export function AppShell() {
       .filter((m) => m.menuPath !== null)
       .map((m) => ({ to: m.menuPath as string, label: m.label })),
     ...(isAdmin
-      ? [{ to: '/configuracoes', label: 'Configurações' }]
+      ? [{ to: '/usuarios', label: 'Usuários' }, { to: '/configuracoes', label: 'Configurações' }]
       : []),
   ];
   const showAssistant = !!me && !me.viewSession && me.modules.some((m) => m.key === 'assistant');
