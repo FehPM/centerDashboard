@@ -7,6 +7,7 @@ import { Redis } from 'ioredis';
 import { McpPool, MetricGateway, RedisCacheStore } from '@center/mcp-core';
 import { loadConfig } from '../src/config.js';
 import { runAgent } from '../src/agent/agent.js';
+import { fullAccess } from '../src/agent/full-access.js';
 import { resolveTenant } from '../src/tenant.js';
 
 /**
@@ -68,7 +69,7 @@ let fallbacks = 0;
 
 for (const { q, expect } of QUESTIONS) {
   const started = Date.now();
-  const result = await runAgent({ gateway, tenant, today, history: [], userMessage: q });
+  const result = await runAgent({ gateway, tenant, today, history: [], userMessage: q, access: fullAccess() });
   const elapsed = Date.now() - started;
   latencies.push(elapsed);
 

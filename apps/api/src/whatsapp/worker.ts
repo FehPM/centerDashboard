@@ -5,6 +5,8 @@ import type { MetricGateway } from '@center/mcp-core';
 import type { AppConfig } from '../config.js';
 import { resolveTenant } from '../tenant.js';
 import { runAgent } from '../agent/agent.js';
+import { loadAccess } from '../authz/access.js';
+import { scopeGateway } from '../authz/scoped-gateway.js';
 import { appendExchange, loadConversationHistory } from '../agent/memory.js';
 import type { CloudApiClient } from './cloud-api-client.js';
 import type { InboundMessage } from './parse.js';
@@ -14,6 +16,8 @@ import { LINK_CODE_TTL_MINUTES, isLinkCodeMessage, redeemLinkCode } from './link
 export const UNKNOWN_PHONE_REPLY =
   'Não encontrei este número vinculado a uma conta. Entre na dashboard, gere um código de '
   + 'vínculo em Configurações e me envie aqui.';
+
+export const ASSISTANT_UNAVAILABLE_REPLY = 'O assistente não está disponível para a sua conta.';
 
 const AGENT_FAILURE_REPLY = 'Não consegui processar sua pergunta agora. Tente novamente em alguns instantes.';
 
@@ -64,6 +68,26 @@ export async function processInboundMessage(deps: WorkerDeps, message: InboundMe
 
   const today = (deps.today ?? todayInSaoPaulo)();
 
+  // Mesmas checagens do painel: cliente ativo, usuário ativo e módulo
+  // `assistant` em vigor para ele. Permissões lidas do banco a cada mensagem.
+  const [organization, user] = await Promise.all([
+    deps.prisma.organization.findUnique({ where: { id: identity.organizationId }, select: { status: true } }),
+    deps.prisma.user.findUnique({
+      where: { id: identity.userId },
+      select: { active: true, role: true, mustChangePassword: true, organizationId: true },
+    }),
+  ]);
+  const access = organization?.status === 'ACTIVE' && user?.active && user.organizationId === identity.organizationId
+    ? await loadAccess(deps.prisma, {
+      userId: identity.userId, organizationId: identity.organizationId,
+      role: user.role, viewedBy: null, mustChangePassword: user.mustChangePassword,
+    }, new Date())
+    : null;
+  if (!access || !access.modules.includes('assistant')) {
+    await deps.cloudApi.sendText(message.fromPhoneE164, ASSISTANT_UNAVAILABLE_REPLY);
+    return;
+  }
+
   let reply = AGENT_FAILURE_REPLY;
   let toolCalls: Awaited<ReturnType<typeof runAgent>>['toolCalls'] = [];
   let conversationId: string | null = null;
@@ -74,7 +98,7 @@ export async function processInboundMessage(deps: WorkerDeps, message: InboundMe
 
     const tenant = await resolveTenant(deps.prisma, identity.organizationId);
     const result = await runAgent({
-      gateway: deps.gateway, tenant, today,
+      gateway: scopeGateway(deps.gateway, access.sources), tenant, today, access,
       history: conversation.history, userMessage: message.text,
     });
     reply = result.reply;

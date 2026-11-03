@@ -20,7 +20,7 @@ function auth(token: string) {
   return { authorization: `Bearer ${token}` };
 }
 
-async function setup() {
+async function setup(modules: string[] = ['assistant']) {
   const gateway = {} as unknown as MetricGateway;
 
   const conversationRow = { id: 'conv_1', userId: 'user_1', organizationId: 'org_1' };
@@ -37,6 +37,12 @@ async function setup() {
         id: 'org_1', status: 'ACTIVE',
       })),
     },
+    organizationModule: {
+      findMany: jest.fn(async () => modules.map((moduleKey) => ({
+        moduleKey, status: 'ACTIVE', startsAt: new Date('2020-01-01'), endsAt: null,
+      }))),
+    },
+    userModuleAccess: { findMany: jest.fn(async () => []) },
     integration: { findMany: jest.fn(async () => []) },
     conversation: {
       findFirst: jest.fn(async () => conversationRow),
@@ -65,7 +71,10 @@ async function setup() {
 
 beforeEach(() => {
   runAgent.mockReset();
-  runAgent.mockResolvedValue({ reply: 'Você faturou R$ 4.800,00.', toolCalls: [] });
+  runAgent.mockResolvedValue({
+    reply: 'Você faturou R$ 4.800,00.', toolCalls: [],
+    usage: { model: 'mock-model', inputTokens: 12, outputTokens: 7 },
+  });
 });
 
 describe('GET /api/agent/conversation', () => {
@@ -144,8 +153,41 @@ describe('POST /api/agent/ask', () => {
       data: { conversationId: 'conv_1', role: 'USER', content: 'oi' },
     });
     expect(prisma.message.create).toHaveBeenCalledWith({
-      data: { conversationId: 'conv_1', role: 'ASSISTANT', content: 'Você faturou R$ 4.800,00.' },
+      data: expect.objectContaining({ conversationId: 'conv_1', role: 'ASSISTANT', content: 'Você faturou R$ 4.800,00.' }),
     });
+    await app.close();
+  });
+
+  it('stores model and token usage on the assistant message', async () => {
+    const { app, prisma, token } = await setup();
+    await app.inject({
+      method: 'POST', url: '/api/agent/ask', headers: auth(token), payload: { message: 'oi' },
+    });
+    expect(prisma.message.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ role: 'ASSISTANT', model: 'mock-model', inputTokens: 12, outputTokens: 7 }),
+    });
+    await app.close();
+  });
+
+  it('passes the module access of the user to the agent', async () => {
+    const { app, token } = await setup();
+    await app.inject({
+      method: 'POST', url: '/api/agent/ask', headers: auth(token), payload: { message: 'oi' },
+    });
+    expect(runAgent).toHaveBeenCalledWith(expect.objectContaining({
+      access: expect.objectContaining({ modules: ['assistant'] }),
+    }));
+    await app.close();
+  });
+
+  it('POST /api/agent/ask without the assistant module → 403 module_not_available', async () => {
+    const { app, token } = await setup(['overview']);
+    const res = await app.inject({
+      method: 'POST', url: '/api/agent/ask', headers: auth(token), payload: { message: 'oi' },
+    });
+    expect(res.statusCode).toBe(403);
+    expect(res.json().error).toBe('module_not_available');
+    expect(runAgent).not.toHaveBeenCalled();
     await app.close();
   });
 });

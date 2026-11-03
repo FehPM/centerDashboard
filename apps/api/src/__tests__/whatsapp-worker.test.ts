@@ -1,6 +1,6 @@
 import type { PrismaClient } from '@prisma/client';
 import type { MetricGateway } from '@center/mcp-core';
-import { UNKNOWN_PHONE_REPLY, processInboundMessage, type WorkerDeps } from '../whatsapp/worker.js';
+import { ASSISTANT_UNAVAILABLE_REPLY, UNKNOWN_PHONE_REPLY, processInboundMessage, type WorkerDeps } from '../whatsapp/worker.js';
 import type { CloudApiClient } from '../whatsapp/cloud-api-client.js';
 import * as agentModule from '../agent/agent.js';
 import { testConfig } from './helpers/config.js';
@@ -20,11 +20,22 @@ const verifiedIdentity = {
   organizationId: 'org_1', verifiedAt: new Date('2026-01-01'),
 };
 
-function buildDeps(identity: unknown) {
+function buildDeps(identity: unknown, modules: string[] = ['assistant', 'overview']) {
   const sendText = jest.fn(async () => {});
   const prisma = {
     whatsAppIdentity: { findUnique: jest.fn(async () => identity) },
-    organization: { findUnique: jest.fn(async () => ({ id: 'org_1' })) },
+    organization: { findUnique: jest.fn(async () => ({ id: 'org_1', status: 'ACTIVE' })) },
+    user: {
+      findUnique: jest.fn(async () => ({
+        active: true, role: 'ADMIN', mustChangePassword: false, organizationId: 'org_1',
+      })),
+    },
+    organizationModule: {
+      findMany: jest.fn(async () => modules.map((moduleKey) => ({
+        moduleKey, status: 'ACTIVE', startsAt: new Date('2020-01-01'), endsAt: null,
+      }))),
+    },
+    userModuleAccess: { findMany: jest.fn(async () => []) },
     integration: { findMany: jest.fn(async () => [
       { kind: 'WEB_ANALYTICS', status: 'OK', config: { propertyId: '111' } },
     ]) },
@@ -74,6 +85,32 @@ describe('processInboundMessage', () => {
       today: '2026-03-15', userMessage: 'quanto vendemos?',
       tenant: { organizationId: 'org_1', externalIds: { ga4PropertyId: '111' } },
     }));
+  });
+
+  it('refuses when the organization has no assistant module', async () => {
+    const { deps, sendText } = buildDeps(verifiedIdentity, ['overview']);
+    await processInboundMessage(deps, message);
+    expect(runAgent).not.toHaveBeenCalled();
+    expect(sendText).toHaveBeenCalledWith('+5511988887777', ASSISTANT_UNAVAILABLE_REPLY);
+  });
+
+  it('refuses when the linked user is inactive', async () => {
+    const { deps, sendText, prisma } = buildDeps(verifiedIdentity);
+    (prisma.user.findUnique as jest.Mock).mockResolvedValueOnce({
+      active: false, role: 'ADMIN', mustChangePassword: false, organizationId: 'org_1',
+    });
+    await processInboundMessage(deps, message);
+    expect(runAgent).not.toHaveBeenCalled();
+    expect(sendText).toHaveBeenCalledWith('+5511988887777', ASSISTANT_UNAVAILABLE_REPLY);
+  });
+
+  it("passes a scoped gateway built from the linked user's access", async () => {
+    const { deps } = buildDeps(verifiedIdentity);
+    await processInboundMessage(deps, message);
+    const input = runAgent.mock.calls[0]![0];
+    expect(input.access.modules).toEqual(['overview', 'assistant']);
+    expect(input.gateway).not.toBe(deps.gateway);
+    await expect(input.gateway.callTool('behavior', 'x', {})).rejects.toThrow(/fonte não permitida/);
   });
 
   it('never calls the agent for an unknown phone', async () => {

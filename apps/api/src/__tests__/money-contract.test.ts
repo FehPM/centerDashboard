@@ -2,6 +2,7 @@ import type { MetricGateway } from '@center/mcp-core';
 import type { MetricSeries, TenantContext } from '@center/shared';
 import { buildAgentTools } from '../agent/tools.js';
 import { buildSystemPrompt } from '../agent/agent.js';
+import { fullAccess } from '../agent/full-access.js';
 
 const CENTS = 480000;
 const tenant: TenantContext = { organizationId: 'org_1', externalIds: {} };
@@ -21,7 +22,7 @@ function buildGateway() {
 }
 
 describe('contrato de centavos — system prompt', () => {
-  const prompt = buildSystemPrompt('2026-03-15');
+  const prompt = buildSystemPrompt('2026-03-15', ['Visão geral']);
 
   it('states the unit in capitals so the instruction is hard to skim past', () => {
     expect(prompt).toContain('CENTAVOS');
@@ -35,7 +36,7 @@ describe('contrato de centavos — system prompt', () => {
 });
 
 describe('contrato de centavos — ferramentas do agente', () => {
-  const tools = buildAgentTools({ gateway: buildGateway(), tenant, today: '2026-03-15' });
+  const tools = buildAgentTools({ gateway: buildGateway(), tenant, today: '2026-03-15', access: fullAccess() });
 
   it('passes the metric total through untouched, still in cents', async () => {
     const result = await tools.consultar_metrica.execute!(
@@ -57,7 +58,7 @@ describe('contrato de centavos — ferramentas do agente', () => {
       ...revenueSeries, metricId: 'commerce.orders', unit: 'count', total: 42,
       points: [{ date: '2026-02-01', value: 42 }],
     });
-    const countTools = buildAgentTools({ gateway, tenant, today: '2026-03-15' });
+    const countTools = buildAgentTools({ gateway, tenant, today: '2026-03-15', access: fullAccess() });
     const result = await countTools.consultar_metrica.execute!(
       { metricId: 'commerce.orders', periodo: 'mês passado' }, {} as never,
     ) as Record<string, string>;

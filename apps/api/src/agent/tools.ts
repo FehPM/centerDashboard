@@ -1,11 +1,13 @@
 import { tool, type ToolSet } from 'ai';
 import { z } from 'zod';
-import { correlateMetrics, type MetricGateway } from '@center/mcp-core';
+import { correlateMetrics } from '@center/mcp-core';
+import type { ModuleKey } from '@center/entitlements';
 import { GranularitySchema, type MetricQuery, type MetricSource, type TenantContext } from '@center/shared';
 import { resolvePeriodPhrase } from './date-resolver.js';
 import { analyzeAppVersionImpact } from '../analysis/app-version-impact.js';
 import { assertRange, BadRequestError } from '../range.js';
 import { AgentGuidanceError } from '../errors.js';
+import { SourceNotAllowedError, type MetricGatewayLike } from '../authz/scoped-gateway.js';
 
 export interface AgentToolCall {
   toolName: string;
@@ -16,11 +18,42 @@ export interface AgentToolCall {
 }
 
 export interface AgentToolContext {
-  gateway: MetricGateway;
+  /** Já restrito às fontes liberadas (`scopeGateway`). */
+  gateway: MetricGatewayLike;
   tenant: TenantContext;
   today: string;
+  /** O que a conta e o usuário podem ver; decide quais ferramentas existem. */
+  access: { modules: readonly ModuleKey[]; sources: ReadonlySet<MetricSource> };
   onToolCall?: (log: AgentToolCall) => void;
 }
+
+/**
+ * Fontes de dados que cada ferramenta usa. Lista vazia = a ferramenta não
+ * depende de uma fonte específica (o gateway restrito já filtra o que ela vê).
+ * A ferramenta é oferecida se a lista é vazia ou ao menos uma fonte está liberada.
+ */
+export const TOOL_SOURCES: Record<string, readonly MetricSource[]> = {
+  listar_metricas: [],
+  consultar_metrica: [],
+  correlacionar: [],
+  ranking: ['commerce', 'ga4'],
+  funil_de_compra: ['ga4'],
+  comparar_periodos: ['commerce', 'ga4'],
+  caminho_ate_a_compra: ['behavior'],
+  impacto_da_tela: ['behavior'],
+  impacto_da_versao: [],
+};
+
+/**
+ * Fontes que a ferramenta exige TODAS (e não só uma), espelhando a rota HTTP.
+ * `impacto_da_versao` compara receita (commerce) e usuários (ga4).
+ */
+const TOOL_REQUIRES_ALL: Record<string, readonly MetricSource[]> = {
+  impacto_da_versao: ['commerce', 'ga4'],
+};
+
+/** Mensagem devolvida ao modelo quando a fonte não está liberada para a conta. */
+const SOURCE_UNAVAILABLE = 'dado não disponível para esta conta';
 
 /** Quantas linhas de ranking vão para o contexto do modelo. */
 const RANKING_ROWS_FOR_MODEL = 5;
@@ -55,8 +88,6 @@ const RANKINGS: Record<string, { source: MetricSource; tool: string; descricao: 
   versoes_do_app: { source: 'ga4', tool: 'app_versions', descricao: 'usuários por versão do app' },
   eventos_mais_frequentes: { source: 'ga4', tool: 'top_events', descricao: 'eventos por contagem' },
 };
-
-const RANKING_NAMES = Object.keys(RANKINGS);
 
 /**
  * Nem toda ferramenta de ranking devolve um total agregado do período —
@@ -123,7 +154,8 @@ const GENERIC_TOOL_ERROR = 'não consegui obter esse dado agora. tente de novo e
  * stack trace — isso NUNCA deve chegar ao modelo (e daí ao WhatsApp).
  */
 function isSafeToShareWithModel(error: unknown): boolean {
-  return error instanceof AgentGuidanceError || error instanceof BadRequestError;
+  return error instanceof AgentGuidanceError || error instanceof BadRequestError
+    || error instanceof SourceNotAllowedError;
 }
 
 /**
@@ -150,6 +182,7 @@ function instrument<TInput, TOutput extends Record<string, unknown>>(
       context.onToolCall?.({
         toolName, input, durationMs: Date.now() - startedAt, success: false, errorMessage: message,
       });
+      if (error instanceof SourceNotAllowedError) return { erro: SOURCE_UNAVAILABLE };
       return { erro: isSafeToShareWithModel(error) ? message : GENERIC_TOOL_ERROR };
     }
   };
@@ -199,9 +232,12 @@ const PeriodShape = {
 };
 
 export function buildAgentTools(context: AgentToolContext): ToolSet {
-  const { gateway, tenant, today } = context;
+  const { gateway, tenant, today, access } = context;
 
-  return {
+  // Só os rankings cujas fontes estão liberadas entram nas opções.
+  const rankingNames = Object.keys(RANKINGS).filter((name) => access.sources.has(RANKINGS[name]!.source));
+
+  const all: ToolSet = {
     listar_metricas: tool({
       description:
         'Lista as métricas disponíveis com id, unidade e dimensões filtráveis. Chame SEMPRE ' +
@@ -264,18 +300,18 @@ export function buildAgentTools(context: AgentToolContext): ToolSet {
 
     ranking: tool({
       description:
-        `Ranking em um período. Tipos disponíveis: ${RANKING_NAMES.join(', ')}. ` +
+        `Ranking em um período. Tipos disponíveis: ${rankingNames.join(', ')}. ` +
         'Use para perguntas do tipo "qual produto mais vendeu", "qual campanha trouxe mais ' +
         'receita", "quantos pedidos foram cancelados", "quais compras falharam".',
       inputSchema: z.object({
-        tipo: z.string().describe(`um de: ${RANKING_NAMES.join(', ')}`),
+        tipo: z.string().describe(`um de: ${rankingNames.join(', ')}`),
         ...PeriodShape,
         limite: z.number().int().min(1).max(20).optional(),
       }),
       execute: instrument(context, 'ranking', async (input) => {
-        const spec = RANKINGS[input.tipo];
+        const spec = rankingNames.includes(input.tipo) ? RANKINGS[input.tipo] : undefined;
         if (!spec) {
-          throw new AgentGuidanceError(`ranking desconhecido: "${input.tipo}". Disponíveis: ${RANKING_NAMES.join(', ')}`);
+          throw new AgentGuidanceError(`ranking desconhecido: "${input.tipo}". Disponíveis: ${rankingNames.join(', ')}`);
         }
 
         const window = resolveWindow(input, today);
@@ -475,4 +511,19 @@ export function buildAgentTools(context: AgentToolContext): ToolSet {
       }),
     }),
   };
+
+  const hasAllowedSource = (name: string): boolean => {
+    const sources = TOOL_SOURCES[name] ?? [];
+    return sources.length === 0 || sources.some((source) => access.sources.has(source));
+  };
+
+  const offered: ToolSet = {};
+  for (const [name, definition] of Object.entries(all)) {
+    if (!hasAllowedSource(name)) continue;
+    if (!(TOOL_REQUIRES_ALL[name] ?? []).every((source) => access.sources.has(source))) continue;
+    if (name === 'ranking' && rankingNames.length === 0) continue;
+    if (name === 'impacto_da_versao' && !access.modules.includes('app_usage')) continue;
+    offered[name] = definition;
+  }
+  return offered;
 }

@@ -1,6 +1,9 @@
 import { McpToolError, type MetricGateway } from '@center/mcp-core';
-import type { MetricSeries, TenantContext } from '@center/shared';
+import type { MetricSeries, MetricSource, TenantContext } from '@center/shared';
+import type { ModuleKey } from '@center/entitlements';
 import { buildAgentTools, type AgentToolCall } from '../agent/tools.js';
+import { fullAccess } from '../agent/full-access.js';
+import { scopeGateway } from '../authz/scoped-gateway.js';
 
 const tenant: TenantContext = {
   organizationId: 'org_1', externalIds: { ga4PropertyId: '111' },
@@ -37,7 +40,7 @@ function buildGateway(overrides: Record<string, unknown> = {}) {
 const TODAY = '2026-03-15';
 
 function tools(gateway: MetricGateway, onToolCall?: (log: AgentToolCall) => void) {
-  return buildAgentTools({ gateway, tenant, today: TODAY, ...(onToolCall ? { onToolCall } : {}) });
+  return buildAgentTools({ gateway, tenant, today: TODAY, access: fullAccess(), ...(onToolCall ? { onToolCall } : {}) });
 }
 
 describe('listar_metricas', () => {
@@ -372,5 +375,50 @@ describe('impacto_da_versao', () => {
       { versao: '5.8.0', dataDeLancamento: '2026-12-31' }, {} as never,
     ) as Record<string, unknown>;
     expect(result.erro).toMatch(/futuro/i);
+  });
+});
+
+describe('restrição por módulos e fontes', () => {
+  function restricted(sources: MetricSource[], modules: ModuleKey[]) {
+    return buildAgentTools({
+      gateway: scopeGateway(buildGateway(), new Set(sources)), tenant, today: TODAY,
+      access: { modules, sources: new Set(sources) },
+    });
+  }
+
+  it('omits ranking options from sources the user cannot see', () => {
+    const t = restricted(['commerce'], ['products']);
+    const description = (t.ranking as { description: string }).description;
+    expect(description).toContain('produtos_mais_vendidos');
+    expect(description).not.toContain('origens_de_trafego');
+  });
+
+  it('does not offer ranking when no ranking source is allowed', () => {
+    expect(restricted(['behavior'], ['app_usage']).ranking).toBeUndefined();
+  });
+
+  it('does not offer caminho_ate_a_compra without behavior', () => {
+    const t = restricted(['commerce', 'ga4'], ['overview']);
+    expect(t.caminho_ate_a_compra).toBeUndefined();
+    expect(t.impacto_da_tela).toBeUndefined();
+    expect(t.funil_de_compra).toBeDefined();
+  });
+
+  it('does not offer impacto_da_versao without app_usage', () => {
+    expect(restricted(['commerce', 'ga4'], ['overview']).impacto_da_versao).toBeUndefined();
+    expect(restricted(['commerce', 'ga4'], ['app_usage']).impacto_da_versao).toBeDefined();
+  });
+
+  it('does not offer impacto_da_versao without commerce and ga4', () => {
+    expect(restricted(['ga4'], ['app_usage']).impacto_da_versao).toBeUndefined();
+    expect(restricted(['commerce'], ['app_usage']).impacto_da_versao).toBeUndefined();
+  });
+
+  it('consultar_metrica on a hidden source returns the unavailable message', async () => {
+    const t = restricted(['commerce'], ['products']);
+    const result = await t.consultar_metrica.execute!(
+      { metricId: 'ga4.sessions', periodo: 'mês passado' }, {} as never,
+    );
+    expect(result).toEqual({ erro: 'dado não disponível para esta conta' });
   });
 });

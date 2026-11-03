@@ -1,9 +1,10 @@
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { generateText, stepCountIs, type LanguageModel, type ModelMessage } from 'ai';
-import type { MetricGateway } from '@center/mcp-core';
+import { getModule } from '@center/entitlements';
+import type { MetricGatewayLike } from '../authz/scoped-gateway.js';
 import type { TenantContext } from '@center/shared';
-import { buildAgentTools, type AgentToolCall } from './tools.js';
+import { buildAgentTools, type AgentToolCall, type AgentToolContext } from './tools.js';
 import { buildSystemPrompt } from './system-prompt.js';
 
 export { buildSystemPrompt };
@@ -21,18 +22,27 @@ export interface AgentMessage {
 }
 
 export interface AgentInput {
-  gateway: MetricGateway;
+  /** Já restrito às fontes liberadas. */
+  gateway: MetricGatewayLike;
   tenant: TenantContext;
   today: string;
   history: AgentMessage[];
   userMessage: string;
+  access: AgentToolContext['access'];
   /** Injetável para teste; em produção vem de `defaultModel()`. */
   model?: LanguageModel;
+}
+
+export interface AgentUsage {
+  model: string;
+  inputTokens: number | null;
+  outputTokens: number | null;
 }
 
 export interface AgentResult {
   reply: string;
   toolCalls: AgentToolCall[];
+  usage: AgentUsage;
 }
 
 /**
@@ -59,6 +69,7 @@ export async function runAgent(input: AgentInput): Promise<AgentResult> {
     gateway: input.gateway,
     tenant: input.tenant,
     today: input.today,
+    access: input.access,
     onToolCall: (log) => toolCalls.push(log),
   });
 
@@ -71,10 +82,14 @@ export async function runAgent(input: AgentInput): Promise<AgentResult> {
     { role: 'user' as const, content: input.userMessage },
   ];
 
+  const model = input.model ?? defaultModel(process.env.ANTHROPIC_API_KEY ?? '');
+  const modelName = typeof model === 'string' ? model : model.modelId;
+  const moduleLabels = input.access.modules.map((key) => getModule(key).label);
+
   try {
     const result = await generateText({
-      model: input.model ?? defaultModel(process.env.ANTHROPIC_API_KEY ?? ''),
-      system: buildSystemPrompt(input.today),
+      model,
+      system: buildSystemPrompt(input.today, moduleLabels),
       messages,
       tools,
       // Sem este limite, uma ferramenta que falha em laço queima a cota da API.
@@ -83,7 +98,12 @@ export async function runAgent(input: AgentInput): Promise<AgentResult> {
     });
 
     const text = result.text.trim();
-    return { reply: text === '' ? FALLBACK_REPLY : truncate(text), toolCalls };
+    const usage: AgentUsage = {
+      model: result.response.modelId ?? modelName,
+      inputTokens: result.totalUsage.inputTokens ?? null,
+      outputTokens: result.totalUsage.outputTokens ?? null,
+    };
+    return { reply: text === '' ? FALLBACK_REPLY : truncate(text), toolCalls, usage };
   } catch (error) {
     // Falha do provedor não pode virar 500 no webhook: o usuário precisa
     // receber uma mensagem, e a Meta precisa receber 200 — por isso este
@@ -94,6 +114,9 @@ export async function runAgent(input: AgentInput): Promise<AgentResult> {
     // quando `runAgent` lança — o que ele nunca faz, precisamente por causa
     // deste catch.
     console.error('runAgent: provedor de modelo falhou, devolvendo resposta de fallback', error);
-    return { reply: FALLBACK_REPLY, toolCalls };
+    return {
+      reply: FALLBACK_REPLY, toolCalls,
+      usage: { model: modelName, inputTokens: null, outputTokens: null },
+    };
   }
 }

@@ -4,6 +4,8 @@ import { resolveTenant } from '../tenant.js';
 import { runAgent } from '../agent/agent.js';
 import { appendExchange, loadUserConversationHistory } from '../agent/memory.js';
 import type { AppDeps } from '../deps.js';
+import { getAccess, requireModule } from '../authz/guards.js';
+import { scopeGateway } from '../authz/scoped-gateway.js';
 
 const AskBodySchema = z.object({
   message: z.string().min(1, 'mensagem vazia').max(2000, 'mensagem muito longa (máximo 2000 caracteres)'),
@@ -20,14 +22,16 @@ function todayInSaoPaulo(): string {
  * vinculado — nenhum webhook público, nenhuma credencial da Meta envolvida.
  */
 export async function registerAgentRoutes(app: FastifyInstance, deps: AppDeps): Promise<void> {
-  app.get('/api/agent/conversation', { preHandler: app.authenticate }, async (request, reply) => {
+  const agentGuard = [app.authenticate, requireModule('assistant', deps.prisma)];
+
+  app.get('/api/agent/conversation', { preHandler: agentGuard }, async (request, reply) => {
     const conversation = await loadUserConversationHistory(
       deps.prisma, request.auth.userId, request.auth.organizationId,
     );
     return reply.send({ conversationId: conversation.conversationId, messages: conversation.history });
   });
 
-  app.post('/api/agent/ask', { preHandler: app.authenticate }, async (request, reply) => {
+  app.post('/api/agent/ask', { preHandler: agentGuard }, async (request, reply) => {
     const parsed = AskBodySchema.safeParse(request.body);
     if (!parsed.success) {
       return reply.status(400).send({ error: 'bad_request', message: parsed.error.issues[0]?.message ?? 'corpo inválido' });
@@ -38,9 +42,10 @@ export async function registerAgentRoutes(app: FastifyInstance, deps: AppDeps): 
     );
     const tenant = await resolveTenant(deps.prisma, request.auth.organizationId);
     const today = todayInSaoPaulo();
+    const access = await getAccess(request, deps.prisma);
 
     const result = await runAgent({
-      gateway: deps.gateway, tenant, today,
+      gateway: scopeGateway(deps.gateway, access.sources), tenant, today, access,
       history: conversation.history, userMessage: parsed.data.message,
     });
 
@@ -52,6 +57,7 @@ export async function registerAgentRoutes(app: FastifyInstance, deps: AppDeps): 
       userMessage: parsed.data.message,
       assistantMessage: result.reply,
       toolCalls: result.toolCalls,
+      usage: result.usage,
     }).catch(() => {});
 
     return reply.send({ conversationId: conversation.conversationId, reply: result.reply });
