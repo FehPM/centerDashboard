@@ -25,3 +25,11 @@ export async function verifyPassword(plain: string, stored: string): Promise<boo
     return false;
   }
 }
+
+// Hash scrypt válido (formato `scrypt$<saltHex>$<hashHex>`) de uma senha
+// fixa e nunca usada de verdade. Serve só para pagar o mesmo custo de
+// `verifyPassword` quando o email não existe — sem isso, a resposta para
+// "usuário inexistente" volta em ~1ms contra ~70ms de "senha errada", um
+// oráculo de timing que permite enumerar emails cadastrados pela rede.
+export const DUMMY_HASH =
+  'scrypt$8ee85cfaeec69f686555b0c1033218be$ce1ec3f525d5eda8728bf862323eef7f8b3cf80edbc5913618e676a78d3398e0b5f82ddc54272fcd7ecfa92261e67912e683ac3ba4365de2367dd047061e3b71';

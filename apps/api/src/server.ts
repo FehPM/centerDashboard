@@ -14,6 +14,7 @@ import { registerAttributionRoutes } from './routes/attribution.js';
 import { registerSettingsRoutes } from './routes/settings.js';
 import { registerUserRoutes } from './routes/users.js';
 import { registerAgentRoutes } from './routes/agent.js';
+import { registerInternal } from './internal/plugin.js';
 import { registerWhatsAppRoutes } from './whatsapp/routes.js';
 
 // No runtime empacotado, este arquivo compila para apps/api/dist/server.js;
@@ -48,12 +49,13 @@ function isReservedPath(pathname: string): boolean {
 }
 
 export async function buildServer(deps: AppDeps, opts: { webRoot?: string } = {}): Promise<FastifyInstance> {
-  // `trustProxy` faz `request.ip` refletir `x-forwarded-for` em vez do
-  // socket cru. Sem isso, atrás de qualquer load balancer/ingress em
+  // `trustProxy` (número de saltos, `TRUST_PROXY_HOPS`) faz `request.ip` refletir o
+  // `x-forwarded-for` adicionado pelo proxy confiável em vez do socket cru. Com `true`
+  // qualquer cliente forjaria o IP; com 0 saltos o cabeçalho é ignorado. Sem isso, atrás de qualquer load balancer/ingress em
   // produção, o rate limit do login (chave = request.ip) colapsa TODOS os
   // clientes num único balde — um atacante zera as tentativas de qualquer
   // usuário legítimo.
-  const app = Fastify({ logger: { level: process.env.LOG_LEVEL ?? 'info' }, trustProxy: true });
+  const app = Fastify({ logger: { level: process.env.LOG_LEVEL ?? 'info' }, trustProxy: deps.config.trustProxyHops > 0 ? deps.config.trustProxyHops : false });
 
   // O corpo cru é necessário para validar a assinatura do webhook do WhatsApp
   // (T32). Guardamos aqui, no único ponto onde o buffer ainda existe.
@@ -119,6 +121,7 @@ export async function buildServer(deps: AppDeps, opts: { webRoot?: string } = {}
   await registerSettingsRoutes(app, deps);
   await registerUserRoutes(app, deps);
   await registerAgentRoutes(app, deps);
+  await registerInternal(app, deps);
   // Desativado a pedido do usuário (2026-09-30): o webhook público
   // `/webhooks/whatsapp` exige que a Meta alcance este servidor pela
   // internet — enquanto não há decisão de expor isso, a integração fica

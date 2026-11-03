@@ -86,4 +86,13 @@ describe('loadConfig', () => {
     expect(config.backofficeOrigin).toBe('http://localhost:5174');
     expect(config.mondayApiToken).toBe('');
   });
+
+  it('TRUST_PROXY_HOPS defaults to 0', () => {
+    expect(loadConfig(validEnv).trustProxyHops).toBe(0);
+    expect(loadConfig({ ...validEnv, TRUST_PROXY_HOPS: '1' }).trustProxyHops).toBe(1);
+  });
+
+  it('rejects a negative TRUST_PROXY_HOPS', () => {
+    expect(() => loadConfig({ ...validEnv, TRUST_PROXY_HOPS: '-1' })).toThrow(/TRUST_PROXY_HOPS/);
+  });
 });

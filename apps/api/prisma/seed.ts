@@ -38,6 +38,22 @@ await prisma.user.upsert({
   },
 });
 
+// Operador de dev da Blan (sem TOTP: o cadastro acontece no primeiro login). Nunca em
+// produção: lá o primeiro operador vem sempre do `create-operator`.
+if (process.env.NODE_ENV !== 'production') {
+  await prisma.platformOperator.upsert({
+    where: { email: 'operator@center.local' },
+    update: {},
+    create: {
+      email: 'operator@center.local',
+      name: 'Operador Dev',
+      passwordHash: await hashPassword('center-dev-123'),
+    },
+  });
+} else {
+  console.log('operador de dev não criado em produção; use create-operator');
+}
+
 // Integração COMMERCE só existe se as duas credenciais da Uappi foram dadas;
 // os segredos vão cifrados, num único JSON, como em produção.
 const apiKey = process.env.SEED_UAPPI_API_KEY;
@@ -58,5 +74,5 @@ if (apiKey && secretKey) {
   });
 }
 
-console.log('seed concluído: admin@center.local / center-dev-123');
+console.log('seed concluído: admin@center.local e operator@center.local / center-dev-123');
 await prisma.$disconnect();

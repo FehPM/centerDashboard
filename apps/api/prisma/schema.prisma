@@ -232,6 +232,9 @@ model PlatformOperator {
   totpEnabledAt DateTime?
   active        Boolean   @default(true)
   lastLoginAt   DateTime?
+  /// Códigos TOTP errados desde o último acerto; ao chegar em 5 bloqueia por 15 min.
+  failedTotpAttempts Int       @default(0)
+  totpLockedUntil    DateTime?
   createdAt     DateTime  @default(now())
 
   auditLogs OperatorAuditLog[]

@@ -32,6 +32,8 @@ services:
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?schema=public
       REDIS_URL: redis://redis:6379
+      # Um proxy reverso na frente da API (padrão em produção); ajuste se a topologia mudar.
+      TRUST_PROXY_HOPS: ${TRUST_PROXY_HOPS:-1}
     ports: ['3333:3333']
     depends_on:
       postgres: { condition: service_healthy }

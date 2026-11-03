@@ -22,6 +22,7 @@
     "eval:agent": "node --experimental-strip-types scripts/eval-agent.ts",
     "warm:cache": "node --experimental-strip-types scripts/warm-cache.ts",
     "health:report": "node --experimental-strip-types scripts/health-report.ts",
+    "create:operator": "node dist/scripts/create-operator.js",
     "provision:admin": "node --experimental-strip-types scripts/provision-admin.ts",
     "seed:demo": "node --experimental-strip-types scripts/seed-demo.ts",
     "migrate:multitenant": "node dist/scripts/migrate-to-multitenant.js"
@@ -32,12 +33,12 @@
   "dependencies": {
     "@ai-sdk/anthropic": "^2.0.0",
     "@ai-sdk/openai-compatible": "^1.0.0",
+    "@center/connectors": "workspace:^",
     "@center/entitlements": "workspace:*",
     "@center/mcp-core": "workspace:*",
     "@center/pii": "workspace:*",
     "@center/secrets": "workspace:^",
     "@center/shared": "workspace:*",
-    "@center/connectors": "workspace:^",
     "@fastify/cors": "^10.0.1",
     "@fastify/jwt": "^9.0.2",
     "@fastify/rate-limit": "^10.2.1",
@@ -47,6 +48,7 @@
     "bullmq": "^5.34.0",
     "fastify": "^5.2.0",
     "ioredis": "^5.4.2",
+    "otplib": "^12.0.1",
     "zod": "^3.24.1"
   },
   "devDependencies": {

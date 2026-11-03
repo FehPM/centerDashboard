@@ -26,6 +26,10 @@ const EnvSchema = z.object({
   // o `aud` já separa os tokens, mas segredos diferentes impedem que um vazamento
   // de um lado valha no outro.
   OPERATOR_JWT_SECRET: z.string().min(32, 'OPERATOR_JWT_SECRET precisa de ao menos 32 caracteres'),
+  // Quantos proxies reversos confiáveis ficam na frente da API. 0 = nenhum: `request.ip` é o
+  // socket e X-Forwarded-For é ignorado (não dá para forjar IP). Atrás de N proxies, o IP vem
+  // do salto que o proxy mais próximo adiciona.
+  TRUST_PROXY_HOPS: z.coerce.number().int().min(0, 'TRUST_PROXY_HOPS não pode ser negativo').default(0),
   // Origens permitidas no CORS: painel do cliente e back-office da Blan.
   PANEL_ORIGIN: z.string().url().default('http://localhost:5173'),
   BACKOFFICE_ORIGIN: z.string().url().default('http://localhost:5174'),
@@ -63,6 +67,7 @@ export interface AppConfig {
   syncBackfillDays: number;
   mockExternalApis: boolean;
   operatorJwtSecret: string;
+  trustProxyHops: number;
   panelOrigin: string;
   backofficeOrigin: string;
   mondayApiToken: string;
@@ -95,6 +100,7 @@ export function loadConfig(env: NodeJS.ProcessEnv | Record<string, string | unde
     syncBackfillDays: e.SYNC_BACKFILL_DAYS,
     mockExternalApis: e.MOCK_EXTERNAL_APIS,
     operatorJwtSecret: e.OPERATOR_JWT_SECRET,
+    trustProxyHops: e.TRUST_PROXY_HOPS,
     panelOrigin: e.PANEL_ORIGIN,
     backofficeOrigin: e.BACKOFFICE_ORIGIN,
     mondayApiToken: e.MONDAY_API_TOKEN,

@@ -8,6 +8,8 @@ export const testConfig = {
   uappiBaseUrl: 'https://api.uappi.com.br', ga4CredentialsJson: '', ga4AppCredentialsJson: '',
   syncIntervalMinutes: 30, syncBackfillDays: 90, mockExternalApis: false,
   operatorJwtSecret: 'z'.repeat(32),
+  // Um proxy na frente, como em produção: os testes de rate limit enviam X-Forwarded-For.
+  trustProxyHops: 1,
   panelOrigin: 'http://localhost:5173', backofficeOrigin: 'http://localhost:5174',
   mondayApiToken: '',
   whatsapp: { appSecret: 's', verifyToken: 'v', accessToken: 'a', phoneNumberId: '1' },
