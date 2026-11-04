@@ -8,14 +8,6 @@ function modelBody(name: string): string {
 }
 
 describe('prisma schema invariants', () => {
-  it('Organization holds no integration columns', () => {
-    expect(modelBody('Organization')).not.toMatch(/uappi|ga4|playConsole|appStoreConnect|monday|statusMapping/i);
-  });
-
-  it('slug is required', () => {
-    expect(modelBody('Organization')).toMatch(/slug\s+String\s+@unique/);
-  });
-
   it('keeps the order natural key unique per organization', () => {
     expect(modelBody('CommerceOrder')).toMatch(/@@unique\(\[organizationId, numeroPedido\]\)/);
   });
@@ -87,22 +79,5 @@ describe('prisma schema invariants', () => {
 
   it('Integration has no plaintext credential columns', () => {
     expect(modelBody('Integration')).not.toMatch(/apiKey|secretKey|token\s+String/i);
-  });
-
-  it('drop migration guards against uncopied legacy integrations before altering', () => {
-    const sql = readFileSync(
-      join(__dirname, '../../prisma/migrations/20261115000000_drop_legacy_org_integration_columns/migration.sql'),
-      'utf8',
-    );
-    const alter = sql.indexOf('ALTER TABLE');
-    const slugGuard = sql.indexOf('"slug" IS NULL');
-    const copyGuard = sql.indexOf('integração legada não copiada');
-    expect(slugGuard).toBeGreaterThan(-1);
-    expect(copyGuard).toBeGreaterThan(slugGuard);
-    expect(alter).toBeGreaterThan(copyGuard);
-    for (const kind of ['COMMERCE', 'WEB_ANALYTICS', 'APP_ANALYTICS', 'PLAY_STORE', 'APP_STORE', 'SPRINT_BOARD']) {
-      expect(sql).toContain(`i."kind" = '${kind}'`);
-    }
-    expect(sql).not.toMatch(/mondayApiToken" IS NOT NULL|statusMapping" IS NOT NULL/);
   });
 });

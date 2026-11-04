@@ -74,9 +74,24 @@ enum OrderStatusGroup {
 model Organization {
   id                     String             @id @default(cuid())
   name                   String
+  uappiApiKey            String?
+  uappiSecretKey         String?
+  ga4PropertyId          String?
+  ga4BigQueryDataset     String?
+  /// Property GA4/Firebase do app mobile (separada da propriedade web em ga4PropertyId).
+  ga4AppPropertyId       String?
+  /// Credenciais criptografadas (SecretBox) — nunca lidas fora da camada de sync.
+  playConsoleCredsJson   String?
+  appStoreConnectKeyJson String?
+  mondayApiToken         String?
+  /// Identificador público, como ga4PropertyId — não é segredo.
+  mondayBoardId          String?
+  /// Sobrescreve o mapa padrão de status da Uappi: { "<idStatus>": "PAID", ... }
+  statusMapping          Json?
   createdAt              DateTime           @default(now())
   status                 OrganizationStatus @default(ACTIVE)
-  slug                   String             @unique
+  /// Opcional até a Task 21 (preenchido para todos os clientes).
+  slug                   String?            @unique
 
   modules            OrganizationModule[]
   integrations       Integration[]
