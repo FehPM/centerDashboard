@@ -2,12 +2,14 @@ import { Worker } from 'bullmq';
 import type { Redis } from 'ioredis';
 import type { PrismaClient } from '@prisma/client';
 import type { MetricGateway } from '@center/mcp-core';
+import type { SecretBox } from '@center/secrets';
 import type { AppConfig } from '../config.js';
 import { resolveTenant } from '../tenant.js';
 import { runAgent } from '../agent/agent.js';
 import { loadAccess } from '../authz/access.js';
 import { scopeGateway } from '../authz/scoped-gateway.js';
 import { appendExchange, loadConversationHistory } from '../agent/memory.js';
+import { markLlmCredentialsRejected, resolveLlm, type ResolvedLlm } from '../agent/llm.js';
 import type { CloudApiClient } from './cloud-api-client.js';
 import type { InboundMessage } from './parse.js';
 import { WHATSAPP_QUEUE_NAME } from './queue.js';
@@ -26,6 +28,7 @@ export interface WorkerDeps {
   gateway: MetricGateway;
   cloudApi: CloudApiClient;
   config: AppConfig;
+  secretBox: SecretBox;
   today?: () => string;
 }
 
@@ -91,18 +94,26 @@ export async function processInboundMessage(deps: WorkerDeps, message: InboundMe
   let reply = AGENT_FAILURE_REPLY;
   let toolCalls: Awaited<ReturnType<typeof runAgent>>['toolCalls'] = [];
   let conversationId: string | null = null;
+  let usage: Awaited<ReturnType<typeof runAgent>>['usage'] | undefined;
+  let llm: ResolvedLlm | undefined;
 
   try {
     const conversation = await loadConversationHistory(deps.prisma, identity.id, identity.organizationId);
     conversationId = conversation.conversationId;
 
     const tenant = await resolveTenant(deps.prisma, identity.organizationId);
+    llm = await resolveLlm(deps.prisma, deps.secretBox, identity.organizationId, deps.config.anthropicApiKey);
     const result = await runAgent({
       gateway: scopeGateway(deps.gateway, access.sources), tenant, today, access,
       history: conversation.history, userMessage: message.text,
+      ...(llm.model ? { model: llm.model } : {}),
     });
     reply = result.reply;
     toolCalls = result.toolCalls;
+    usage = result.usage;
+    if (result.credentialsRejected && llm.mode === 'OWN') {
+      await markLlmCredentialsRejected(deps.prisma, identity.organizationId).catch(() => {});
+    }
   } catch (error) {
     // Falha no agente ou no banco não pode impedir a resposta: silêncio no
     // WhatsApp é pior do que uma mensagem de erro. Mas a falha precisa ficar
@@ -123,6 +134,8 @@ export async function processInboundMessage(deps: WorkerDeps, message: InboundMe
       userMessage: message.text,
       assistantMessage: reply,
       toolCalls,
+      ...(usage ? { usage } : {}),
+      ...(llm ? { llm: { mode: llm.mode, keyLabel: llm.keyLabel } } : {}),
     }).catch(() => {
       // Auditoria é best-effort; o usuário já foi respondido.
     });

@@ -6,6 +6,7 @@ import { PrismaClient } from '@prisma/client';
 // `main.ts` e `eval-agent.ts`.
 import { Redis } from 'ioredis';
 import { McpPool, MetricGateway, RedisCacheStore, type McpServerConfig } from '@center/mcp-core';
+import { SecretBox } from '@center/secrets';
 import { loadConfig } from '../config.js';
 import { CloudApiClient } from './cloud-api-client.js';
 import { createWhatsAppWorker } from './worker.js';
@@ -39,7 +40,9 @@ const pool = await McpPool.spawn(mcpServers);
 const gateway = new MetricGateway(pool, new RedisCacheStore(redis));
 const cloudApi = new CloudApiClient(whatsappConfig);
 
-const worker = createWhatsAppWorker({ prisma, gateway, cloudApi, config }, redis);
+const worker = createWhatsAppWorker({
+  prisma, gateway, cloudApi, config, secretBox: new SecretBox(config.credentialsEncryptionKey),
+}, redis);
 
 worker.on('failed', (job, error) => {
   console.error(`job ${job?.id} falhou (tentativa ${job?.attemptsMade}):`, error.message);

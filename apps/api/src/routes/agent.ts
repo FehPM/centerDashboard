@@ -3,6 +3,9 @@ import { z } from 'zod';
 import { resolveTenant } from '../tenant.js';
 import { runAgent } from '../agent/agent.js';
 import { appendExchange, loadUserConversationHistory } from '../agent/memory.js';
+import { markLlmCredentialsRejected, resolveLlm } from '../agent/llm.js';
+import { summarizeUsage } from '../agent/usage.js';
+import { assertRange, BadRequestError } from '../range.js';
 import type { AppDeps } from '../deps.js';
 import { getAccess, requireModule } from '../authz/guards.js';
 import { scopeGateway } from '../authz/scoped-gateway.js';
@@ -31,6 +34,22 @@ export async function registerAgentRoutes(app: FastifyInstance, deps: AppDeps): 
     return reply.send({ conversationId: conversation.conversationId, messages: conversation.history });
   });
 
+  // Consumo não é segredo: qualquer usuário com o assistente vê o da própria organização.
+  app.get<{ Querystring: { from?: string; to?: string } }>('/api/agent/usage', { preHandler: agentGuard }, async (request, reply) => {
+    const today = todayInSaoPaulo();
+    const to = request.query.to ?? today;
+    const from = request.query.from ?? `${today.slice(0, 8)}01`;
+    const isDay = (value: string) => /^\d{4}-\d{2}-\d{2}$/.test(value);
+    if (!isDay(from) || !isDay(to)) return reply.status(400).send({ error: 'bad_request', message: 'use datas YYYY-MM-DD' });
+    try {
+      assertRange({ from, to });
+    } catch (error) {
+      if (error instanceof BadRequestError) return reply.status(400).send({ error: 'bad_request', message: error.message });
+      throw error;
+    }
+    return reply.send(await summarizeUsage(deps.prisma, request.auth.organizationId, { from, to }));
+  });
+
   app.post('/api/agent/ask', { preHandler: agentGuard }, async (request, reply) => {
     const parsed = AskBodySchema.safeParse(request.body);
     if (!parsed.success) {
@@ -44,10 +63,15 @@ export async function registerAgentRoutes(app: FastifyInstance, deps: AppDeps): 
     const today = todayInSaoPaulo();
     const access = await getAccess(request, deps.prisma);
 
+    const llm = await resolveLlm(deps.prisma, deps.secretBox, request.auth.organizationId, deps.config.anthropicApiKey);
     const result = await runAgent({
       gateway: scopeGateway(deps.gateway, access.sources), tenant, today, access,
       history: conversation.history, userMessage: parsed.data.message,
+      ...(llm.model ? { model: llm.model } : {}),
     });
+    if (result.credentialsRejected && llm.mode === 'OWN') {
+      await markLlmCredentialsRejected(deps.prisma, request.auth.organizationId).catch(() => {});
+    }
 
     // Best-effort: o usuário já recebeu a resposta na chamada HTTP, uma
     // falha ao persistir o histórico não pode virar erro pra ele.
@@ -58,6 +82,7 @@ export async function registerAgentRoutes(app: FastifyInstance, deps: AppDeps): 
       assistantMessage: result.reply,
       toolCalls: result.toolCalls,
       usage: result.usage,
+      llm: { mode: llm.mode, keyLabel: llm.keyLabel },
     }).catch(() => {});
 
     return reply.send({ conversationId: conversation.conversationId, reply: result.reply });

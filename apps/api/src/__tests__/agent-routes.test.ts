@@ -43,7 +43,10 @@ async function setup(modules: string[] = ['assistant']) {
       }))),
     },
     userModuleAccess: { findMany: jest.fn(async () => []) },
-    integration: { findMany: jest.fn(async () => []) },
+    integration: {
+      findMany: jest.fn(async () => []), findUnique: jest.fn(async () => null),
+      updateMany: jest.fn(async () => ({ count: 1 })),
+    },
     conversation: {
       findFirst: jest.fn(async () => conversationRow),
       create: jest.fn(async () => conversationRow),
@@ -166,6 +169,57 @@ describe('POST /api/agent/ask', () => {
     expect(prisma.message.create).toHaveBeenCalledWith({
       data: expect.objectContaining({ role: 'ASSISTANT', model: 'mock-model', inputTokens: 12, outputTokens: 7 }),
     });
+    await app.close();
+  });
+
+  it('snapshots who paid for the answer (mode and key label) on the assistant message', async () => {
+    const { app, prisma, token } = await setup();
+    await app.inject({
+      method: 'POST', url: '/api/agent/ask', headers: auth(token), payload: { message: 'oi' },
+    });
+    expect(prisma.message.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ role: 'ASSISTANT', llmMode: 'MANAGED', llmKeyLabel: 'Plataforma' }),
+    });
+    await app.close();
+  });
+
+  it('a rejected own key flips the LLM integration to ERROR, with no silent fallback to the platform key', async () => {
+    const { app, prisma, token } = await setup();
+    const box = new SecretBox(testConfig.credentialsEncryptionKey);
+    (prisma.integration.findUnique as jest.Mock).mockResolvedValue({
+      status: 'OK', config: { mode: 'OWN', label: 'Chave produção' },
+      secrets: box.encrypt(JSON.stringify({ apiKey: 'sk-own' })),
+    });
+    runAgent.mockResolvedValueOnce({
+      reply: 'Não consegui consultar os dados agora.', toolCalls: [], credentialsRejected: true,
+      usage: { model: 'm', inputTokens: null, outputTokens: null },
+    });
+    await app.inject({
+      method: 'POST', url: '/api/agent/ask', headers: auth(token), payload: { message: 'oi' },
+    });
+    expect(prisma.integration.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ status: 'ERROR' }),
+    }));
+    expect(prisma.message.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ role: 'ASSISTANT', llmMode: 'OWN', llmKeyLabel: 'Chave produção' }),
+    });
+    await app.close();
+  });
+
+  it('GET /api/agent/usage returns the organization consumption and rejects a bad range', async () => {
+    const { app, prisma, token } = await setup();
+    (prisma.message as unknown as { groupBy: jest.Mock }).groupBy = jest.fn(async () => [
+      { llmMode: 'MANAGED', llmKeyLabel: 'Plataforma', _count: { _all: 2 }, _sum: { inputTokens: 30, outputTokens: 10 } },
+    ]);
+    const ok = await app.inject({
+      method: 'GET', url: '/api/agent/usage?from=2026-11-01&to=2026-11-30', headers: auth(token),
+    });
+    expect(ok.statusCode).toBe(200);
+    expect(ok.json().totals).toEqual({ messages: 2, inputTokens: 30, outputTokens: 10 });
+    const bad = await app.inject({
+      method: 'GET', url: '/api/agent/usage?from=2026-11-30&to=2026-11-01', headers: auth(token),
+    });
+    expect(bad.statusCode).toBe(400);
     await app.close();
   });
 

@@ -72,7 +72,15 @@ export interface AgentConversationView { conversationId: string; messages: Agent
 export interface AgentAskResult { conversationId: string; reply: string }
 
 export type IntegrationKind =
-  | 'COMMERCE' | 'WEB_ANALYTICS' | 'APP_ANALYTICS' | 'PLAY_STORE' | 'APP_STORE' | 'SPRINT_BOARD';
+  | 'COMMERCE' | 'WEB_ANALYTICS' | 'APP_ANALYTICS' | 'PLAY_STORE' | 'APP_STORE' | 'SPRINT_BOARD' | 'LLM';
+export interface AgentUsageRow {
+  mode: 'OWN' | 'MANAGED'; keyLabel: string; messages: number; inputTokens: number; outputTokens: number;
+}
+export interface AgentUsageView {
+  from: string; to: string;
+  totals: { messages: number; inputTokens: number; outputTokens: number };
+  byKey: AgentUsageRow[];
+}
 export type IntegrationStatus = 'PENDING' | 'OK' | 'ERROR' | 'DISABLED';
 
 export interface IntegrationStatusItem {
@@ -204,6 +212,10 @@ export const apiClient = {
 
   askAgent(message: string): Promise<AgentAskResult> {
     return request('/api/agent/ask', { method: 'POST', body: JSON.stringify({ message }) });
+  },
+
+  getAgentUsage(): Promise<AgentUsageView> {
+    return request('/api/agent/usage');
   },
 
   getIntegrations(): Promise<IntegrationsView> {

@@ -80,7 +80,16 @@ export interface ModuleUpdate {
 }
 
 export type IntegrationKind =
-  'COMMERCE' | 'WEB_ANALYTICS' | 'APP_ANALYTICS' | 'PLAY_STORE' | 'APP_STORE' | 'SPRINT_BOARD';
+  'COMMERCE' | 'WEB_ANALYTICS' | 'APP_ANALYTICS' | 'PLAY_STORE' | 'APP_STORE' | 'SPRINT_BOARD' | 'LLM';
+
+export interface LlmUsageRow {
+  mode: 'OWN' | 'MANAGED'; keyLabel: string; messages: number; inputTokens: number; outputTokens: number;
+}
+export interface LlmUsage {
+  from: string; to: string;
+  totals: { messages: number; inputTokens: number; outputTokens: number };
+  byKey: LlmUsageRow[];
+}
 
 export interface IntegrationView {
   kind: IntegrationKind;
@@ -94,6 +103,8 @@ export interface IntegrationView {
   lastSyncedAt?: string | null;
   syncError?: string | null;
   serviceAccountEmail?: string | null;
+  /** Só LLM: últimos 4 caracteres da chave própria. */
+  keyHint?: string | null;
 }
 
 export interface IntegrationUpdate {
@@ -152,6 +163,8 @@ export const backofficeApi = {
       `/internal/organizations/${encodeURIComponent(id)}/modules/${encodeURIComponent(key)}`,
       { method: 'PUT', body: JSON.stringify(body) },
     ),
+  getLlmUsage: (id: string) =>
+    request<LlmUsage>(`/internal/organizations/${encodeURIComponent(id)}/llm-usage`),
   listIntegrations: (id: string) =>
     request<IntegrationView[]>(`/internal/organizations/${encodeURIComponent(id)}/integrations`),
   saveIntegration: (id: string, kind: IntegrationKind, body: IntegrationUpdate) =>

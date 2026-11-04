@@ -1,5 +1,6 @@
 import type { PrismaClient } from '@prisma/client';
 import type { MetricGateway } from '@center/mcp-core';
+import { SecretBox } from '@center/secrets';
 import { ASSISTANT_UNAVAILABLE_REPLY, UNKNOWN_PHONE_REPLY, processInboundMessage, type WorkerDeps } from '../whatsapp/worker.js';
 import type { CloudApiClient } from '../whatsapp/cloud-api-client.js';
 import * as agentModule from '../agent/agent.js';
@@ -36,9 +37,12 @@ function buildDeps(identity: unknown, modules: string[] = ['assistant', 'overvie
       }))),
     },
     userModuleAccess: { findMany: jest.fn(async () => []) },
-    integration: { findMany: jest.fn(async () => [
-      { kind: 'WEB_ANALYTICS', status: 'OK', config: { propertyId: '111' } },
-    ]) },
+    integration: {
+      findMany: jest.fn(async () => [
+        { kind: 'WEB_ANALYTICS', status: 'OK', config: { propertyId: '111' } },
+      ]),
+      findUnique: jest.fn(async () => null),
+    },
     conversation: { findFirst: jest.fn(async () => ({ id: 'conv_1' })), update: jest.fn(async () => ({})) },
     message: { findMany: jest.fn(async () => []), create: jest.fn(async () => ({ id: 'msg_1' })) },
     toolCallLog: { createMany: jest.fn(async () => ({ count: 0 })) },
@@ -54,6 +58,7 @@ function buildDeps(identity: unknown, modules: string[] = ['assistant', 'overvie
     gateway: {} as unknown as MetricGateway,
     cloudApi: { sendText } as unknown as CloudApiClient,
     config: testConfig,
+    secretBox: new SecretBox(testConfig.credentialsEncryptionKey),
     today: () => '2026-03-15',
   };
   return { deps, sendText, prisma };

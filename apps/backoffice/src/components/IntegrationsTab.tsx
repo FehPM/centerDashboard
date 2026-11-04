@@ -2,6 +2,7 @@ import { useState, type FormEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   ApiError, absoluteApiUrl, backofficeApi, type IntegrationKind, type IntegrationUpdate, type IntegrationView,
+  type LlmUsage,
 } from '../lib/api-client.js';
 
 const TZ = 'America/Sao_Paulo';
@@ -12,7 +13,7 @@ interface KindDef {
   provider: string;
   label: string;
   /** Campos de `config`; `optional` é omitido do corpo quando vazio. */
-  fields: Array<{ name: string; optional?: boolean }>;
+  fields: Array<{ name: string; optional?: boolean; options?: Array<{ value: string; label: string }> }>;
   secrets: string[];
   /** COMMERCE: `statusMapping` como JSON opcional. */
   statusMapping?: boolean;
@@ -28,6 +29,21 @@ const KINDS: KindDef[] = [
   { kind: 'PLAY_STORE', provider: 'GOOGLE_PLAY', label: 'Play Store', fields: [{ name: 'packageName' }], secrets: ['credentialsJson'] },
   { kind: 'APP_STORE', provider: 'APP_STORE_CONNECT', label: 'App Store', fields: [{ name: 'appId' }], secrets: ['keyJson'] },
   { kind: 'SPRINT_BOARD', provider: 'MONDAY', label: 'Sprint (Monday)', fields: [{ name: 'boardId' }], secrets: [] },
+  {
+    kind: 'LLM', provider: 'ANTHROPIC', label: 'IA do assistente',
+    fields: [
+      {
+        name: 'mode',
+        options: [
+          { value: 'MANAGED', label: 'Gerenciada pela Blan (cobrada pelo uso)' },
+          { value: 'OWN', label: 'Chave própria do cliente (sem cobrança de tokens)' },
+        ],
+      },
+      { name: 'label' },
+      { name: 'model', optional: true },
+    ],
+    secrets: ['apiKey'],
+  },
 ];
 
 const STATUS_LABEL: Record<IntegrationView['status'], string> = {
@@ -39,6 +55,35 @@ const formatDateTime = (iso: string) =>
   new Date(iso).toLocaleString('pt-BR', { timeZone: TZ, dateStyle: 'short', timeStyle: 'short' });
 
 const errorMessage = (e: unknown, fallback: string) => (e instanceof ApiError ? e.message : fallback);
+
+const tokens = new Intl.NumberFormat('pt-BR');
+
+/** Consumo do mês, por chave. Só o modo "Gerenciada" entra na cobrança. */
+function LlmUsagePanel({ organizationId }: { organizationId: string }) {
+  const { data } = useQuery<LlmUsage>({
+    queryKey: ['llm-usage', organizationId],
+    queryFn: () => backofficeApi.getLlmUsage(organizationId),
+  });
+  if (!data) return null;
+  return (
+    <div className="my-2 text-sm" aria-label="Consumo de IA no mês">
+      <p>
+        Consumo de {formatDate(`${data.from}T12:00:00-03:00`)} a {formatDate(`${data.to}T12:00:00-03:00`)}:
+        {' '}{tokens.format(data.totals.inputTokens + data.totals.outputTokens)} tokens em {data.totals.messages} respostas
+      </p>
+      {data.byKey.length > 0 && (
+        <ul className="list-disc pl-5">
+          {data.byKey.map((r) => (
+            <li key={`${r.mode}|${r.keyLabel}`}>
+              {r.keyLabel} — {r.mode === 'MANAGED' ? 'cobrável' : 'chave do cliente'}:{' '}
+              {tokens.format(r.inputTokens)} entrada + {tokens.format(r.outputTokens)} saída
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
 
 function IntegrationCard({ organizationId, def, row }: {
   organizationId: string; def: KindDef; row: IntegrationView | undefined;
@@ -132,14 +177,24 @@ function IntegrationCard({ organizationId, def, row }: {
           {row.syncError && <p className="text-sm text-red-600">Erro de sincronização: {row.syncError}</p>}
         </>
       )}
+      {def.kind === 'LLM' && row?.keyHint && <p className="text-sm">Chave atual: {row.keyHint}</p>}
+      {def.kind === 'LLM' && <LlmUsagePanel organizationId={organizationId} />}
       {def.ga4 && row?.serviceAccountEmail && (
         <p className="text-sm">Conceda acesso à propriedade para: <strong>{row.serviceAccountEmail}</strong></p>
       )}
       <form className="mt-3 flex flex-col gap-2" onSubmit={submit}>
         {def.fields.map((f) => (
           <label key={f.name} className="text-sm">{f.name}
-            <input value={values[f.name] ?? ''} onChange={(e) => setValues({ ...values, [f.name]: e.target.value })}
-              className="mt-1 block w-full rounded-md border px-2 py-1" />
+            {f.options ? (
+              <select value={values[f.name] ?? ''} onChange={(e) => setValues({ ...values, [f.name]: e.target.value })}
+                className="mt-1 block w-full rounded-md border px-2 py-1">
+                <option value="" disabled>Selecione</option>
+                {f.options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </select>
+            ) : (
+              <input value={values[f.name] ?? ''} onChange={(e) => setValues({ ...values, [f.name]: e.target.value })}
+                className="mt-1 block w-full rounded-md border px-2 py-1" />
+            )}
           </label>
         ))}
         {def.statusMapping && (

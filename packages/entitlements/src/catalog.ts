@@ -19,6 +19,7 @@ export const INTEGRATION_KINDS = [
   'PLAY_STORE',
   'APP_STORE',
   'SPRINT_BOARD',
+  'LLM',
 ] as const;
 export type IntegrationKind = (typeof INTEGRATION_KINDS)[number];
 

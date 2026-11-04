@@ -7,6 +7,8 @@ import {
   ALLOWED_PROVIDERS, IntegrationConfigSchemas, IntegrationSecretSchemas,
 } from '../integrations/kinds.js';
 import { decryptSecrets, encryptSecrets } from '../integrations/repository.js';
+import { summarizeUsage } from '../agent/usage.js';
+import { assertRange, BadRequestError } from '../range.js';
 import { recordAudit } from './audit.js';
 import { makeRequireOperator } from './auth/guard.js';
 
@@ -71,6 +73,10 @@ export async function registerIntegrationRoutes(scope: FastifyInstance, deps: Ap
       view.lastSyncedAt = sync?.lastSyncedAt ?? null;
       view.syncError = sync?.lastError ?? null;
     }
+    if (row.kind === 'LLM' && row.secrets) {
+      const apiKey = decryptSecrets(secretBox, row.secrets)?.apiKey;
+      view.keyHint = typeof apiKey === 'string' && apiKey.length >= 4 ? `…${apiKey.slice(-4)}` : null;
+    }
     if (row.kind === 'WEB_ANALYTICS') view.serviceAccountEmail = clientEmail(config.ga4CredentialsJson);
     if (row.kind === 'APP_ANALYTICS') {
       view.serviceAccountEmail = clientEmail(config.ga4AppCredentialsJson) ?? clientEmail(config.ga4CredentialsJson);
@@ -94,6 +100,26 @@ export async function registerIntegrationRoutes(scope: FastifyInstance, deps: Ap
     const sync = rows.some((r) => r.kind === 'COMMERCE') ? await loadSync(org.id) : null;
     return rows.map((row) => present(row as Row, sync));
   });
+
+  // Base da cobrança por uso: tokens por chave (modo + nome) no período.
+  scope.get<{ Params: { id: string }; Querystring: { from?: string; to?: string } }>(
+    '/organizations/:id/llm-usage', { preHandler }, async (request, reply) => {
+      const org = await prisma.organization.findUnique({ where: { id: request.params.id }, select: { id: true } });
+      if (!org) return reply.status(404).send(orgNotFound);
+      const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
+      const to = request.query.to ?? today;
+      const from = request.query.from ?? `${today.slice(0, 8)}01`;
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) {
+        return reply.status(400).send(badRequest('use datas YYYY-MM-DD'));
+      }
+      try {
+        assertRange({ from, to });
+      } catch (error) {
+        if (error instanceof BadRequestError) return reply.status(400).send(badRequest(error.message));
+        throw error;
+      }
+      return summarizeUsage(prisma, org.id, { from, to });
+    });
 
   scope.put<{ Params: { id: string; kind: string } }>(
     '/organizations/:id/integrations/:kind', { preHandler }, async (request, reply) => {
@@ -121,6 +147,7 @@ export async function registerIntegrationRoutes(scope: FastifyInstance, deps: Ap
       let configToStore: Record<string, unknown> = body.data.config;
 
       let secretsToStore: Record<string, unknown> | undefined = newSecrets;
+      let clearSecrets = false;
 
       if (kind === 'COMMERCE') {
         const commerceProvider = provider as CommerceProvider;
@@ -143,7 +170,18 @@ export async function registerIntegrationRoutes(scope: FastifyInstance, deps: Ap
         const parsedConfig = IntegrationConfigSchemas[kind].safeParse(body.data.config);
         if (!parsedConfig.success) return reply.status(400).send(badRequest(zodMessage(parsedConfig.error)));
         configToStore = parsedConfig.data;
-        if (kind === 'PLAY_STORE' || kind === 'APP_STORE') {
+        if (kind === 'LLM') {
+          const llmConfig = parsedConfig.data as { mode: 'OWN' | 'MANAGED' };
+          if (llmConfig.mode === 'MANAGED') {
+            if (newSecrets) return reply.status(400).send(badRequest('o modo gerenciado não usa chave própria'));
+            // Sair do modo próprio não pode deixar a chave do cliente guardada.
+            clearSecrets = Boolean(current?.secrets);
+          } else {
+            const parsedSecrets = IntegrationSecretSchemas.LLM.safeParse(effectiveSecrets ?? {});
+            if (!parsedSecrets.success) return reply.status(400).send(badRequest('informe a chave de API (apiKey)'));
+            if (newSecrets) secretsToStore = parsedSecrets.data;
+          }
+        } else if (kind === 'PLAY_STORE' || kind === 'APP_STORE') {
           const parsedSecrets = IntegrationSecretSchemas[kind].safeParse(effectiveSecrets ?? {});
           if (!parsedSecrets.success) return reply.status(400).send(badRequest(zodMessage(parsedSecrets.error)));
           if (newSecrets) secretsToStore = parsedSecrets.data;
@@ -154,7 +192,7 @@ export async function registerIntegrationRoutes(scope: FastifyInstance, deps: Ap
 
       const secretsData = secretsToStore
         ? { secrets: encryptSecrets(secretBox, secretsToStore), secretsUpdatedAt: new Date() }
-        : {};
+        : clearSecrets ? { secrets: null, secretsUpdatedAt: null } : {};
       const common = { provider, config: configToStore as never, status, lastError, ...(lastCheckAt ? { lastCheckAt } : {}) };
       const saved = await prisma.integration.upsert({
         where: { organizationId_kind: { organizationId, kind } },

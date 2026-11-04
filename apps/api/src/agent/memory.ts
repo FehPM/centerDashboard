@@ -88,6 +88,8 @@ export interface AppendExchangeParams {
   assistantMessage: string;
   toolCalls: AgentToolCall[];
   usage?: AgentUsage;
+  /** Quem pagou esta resposta — fica gravado na mensagem, não muda se o cliente trocar de chave. */
+  llm?: { mode: 'OWN' | 'MANAGED'; keyLabel: string };
 }
 
 export async function appendExchange(prisma: PrismaClient, params: AppendExchangeParams): Promise<void> {
@@ -101,6 +103,7 @@ export async function appendExchange(prisma: PrismaClient, params: AppendExchang
       ...(params.usage
         ? { model: params.usage.model, inputTokens: params.usage.inputTokens, outputTokens: params.usage.outputTokens }
         : {}),
+      ...(params.llm ? { llmMode: params.llm.mode, llmKeyLabel: params.llm.keyLabel } : {}),
     },
   });
 

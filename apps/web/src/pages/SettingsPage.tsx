@@ -1,3 +1,4 @@
+import { AgentUsageCard } from '../components/settings/AgentUsageCard.js';
 import { IntegrationStatusList } from '../components/settings/IntegrationStatusList.js';
 
 export function SettingsPage() {
@@ -8,6 +9,7 @@ export function SettingsPage() {
         As credenciais são configuradas pela equipe de suporte. Aqui você acompanha o status.
       </p>
       <IntegrationStatusList />
+      <AgentUsageCard />
     </section>
   );
 }

@@ -1,6 +1,6 @@
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
-import { generateText, stepCountIs, type LanguageModel, type ModelMessage } from 'ai';
+import { APICallError, generateText, stepCountIs, type LanguageModel, type ModelMessage } from 'ai';
 import { getModule } from '@center/entitlements';
 import type { MetricGatewayLike } from '../authz/scoped-gateway.js';
 import type { TenantContext } from '@center/shared';
@@ -43,19 +43,23 @@ export interface AgentResult {
   reply: string;
   toolCalls: AgentToolCall[];
   usage: AgentUsage;
+  /** O provedor recusou a chave (401/403). Quem chama decide o que fazer com a integração. */
+  credentialsRejected?: boolean;
 }
 
 /**
  * Com `LLM_BASE_URL` definida (ex.: Ollama em http://localhost:11434/v1), o
  * agente fala com esse servidor OpenAI-compatível e nenhum dado sai da rede.
  */
-export function defaultModel(apiKey: string): LanguageModel {
+export const DEFAULT_ANTHROPIC_MODEL = 'claude-sonnet-5';
+
+export function defaultModel(apiKey: string, modelName?: string): LanguageModel {
   const baseURL = process.env.LLM_BASE_URL;
   if (baseURL) {
     const local = createOpenAICompatible({ name: 'local', baseURL });
-    return local(process.env.LLM_MODEL ?? 'qwen3:8b');
+    return local(modelName ?? process.env.LLM_MODEL ?? 'qwen3:8b');
   }
-  return createAnthropic({ apiKey })('claude-sonnet-5');
+  return createAnthropic({ apiKey })(modelName ?? DEFAULT_ANTHROPIC_MODEL);
 }
 
 function truncate(text: string): string {
@@ -117,9 +121,12 @@ export async function runAgent(input: AgentInput): Promise<AgentResult> {
     // quando `runAgent` lança — o que ele nunca faz, precisamente por causa
     // deste catch.
     console.error('runAgent: provedor de modelo falhou, devolvendo resposta de fallback', error);
+    const credentialsRejected = APICallError.isInstance(error)
+      && (error.statusCode === 401 || error.statusCode === 403);
     return {
       reply: FALLBACK_REPLY, toolCalls,
       usage: { model: modelName, inputTokens: null, outputTokens: null },
+      ...(credentialsRejected ? { credentialsRejected: true } : {}),
     };
   }
 }

@@ -8,6 +8,7 @@ const KIND_LABELS: Record<IntegrationKind, string> = {
   PLAY_STORE: 'Google Play',
   APP_STORE: 'App Store',
   SPRINT_BOARD: 'Board do Monday',
+  LLM: 'IA do assistente',
 };
 
 const STATUS_LABELS: Record<IntegrationStatus, string> = {
