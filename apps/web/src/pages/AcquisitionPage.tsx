@@ -1,6 +1,7 @@
 import { useFilters } from '../hooks/use-filters.js';
 import { useTool } from '../hooks/use-tool.js';
 import { PeriodPicker } from '../components/filters/PeriodPicker.js';
+import { CommerceSyncNotice } from '../components/layout/CommerceSyncNotice.js';
 import { RankingTable } from '../components/charts/RankingTable.js';
 import { FunnelChart } from '../components/charts/FunnelChart.js';
 import type { FunnelResult, RankingResult } from '../lib/api-client.js';
@@ -23,6 +24,7 @@ export function AcquisitionPage({ today }: { today: string }) {
 
   return (
     <div className="space-y-6">
+      <CommerceSyncNotice />
       <PeriodPicker today={today} />
 
       <FunnelChart

@@ -84,7 +84,10 @@ export async function runAgent(input: AgentInput): Promise<AgentResult> {
 
   const model = input.model ?? defaultModel(process.env.ANTHROPIC_API_KEY ?? '');
   const modelName = typeof model === 'string' ? model : model.modelId;
-  const moduleLabels = input.access.modules.map((key) => getModule(key).label);
+  // Só módulos de dados (spec §7.2): o próprio assistente não é um escopo de conteúdo.
+  const moduleLabels = input.access.modules
+    .filter((key) => key !== 'assistant')
+    .map((key) => getModule(key).label);
 
   try {
     const result = await generateText({

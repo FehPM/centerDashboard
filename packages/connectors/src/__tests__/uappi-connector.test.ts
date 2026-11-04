@@ -1,7 +1,7 @@
 import { Pseudonymizer } from '@center/pii';
 import { UappiApiError, type UappiClientLike } from '@center/uappi-client';
 import { createUappiConnector } from '../uappi/connector.js';
-import type { CanonicalOrderRecord, ReadFailure } from '../types.js';
+import { CredentialsRejectedError, isCredentialsRejected, type CanonicalOrderRecord, type ReadFailure } from '../types.js';
 
 const pseudonymizer = new Pseudonymizer('p'.repeat(32));
 const logger = jest.fn();
@@ -89,6 +89,41 @@ describe('uappi connector', () => {
       connector.readOrders(connector.parseSettings({}, secrets), window, { pseudonymizer, logger }),
     );
     expect(records.map((r) => r.kind)).toEqual(['failure', 'order']);
+  });
+
+  it.each([401, 403])('readOrders turns a %i on the listing into CredentialsRejectedError', async (status) => {
+    const client = fakeClient([]);
+    (client.iterateOrders as jest.Mock).mockImplementation(async function* () {
+      throw new UappiApiError(status, `Uappi respondeu ${status}: corpo do upstream`);
+    });
+    const connector = realConnector(client);
+    const error = await collect(
+      connector.readOrders(connector.parseSettings({}, secrets), window, { pseudonymizer, logger }),
+    ).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(CredentialsRejectedError);
+    expect(isCredentialsRejected(error)).toBe(true);
+    // Mensagem fixa: nada do corpo da resposta do provedor.
+    expect((error as Error).message).toBe('credenciais recusadas pela Uappi');
+  });
+
+  it('readOrders lets an outage (503, timeout) through as a plain, transient error', async () => {
+    const client = fakeClient([]);
+    (client.iterateOrders as jest.Mock).mockImplementation(async function* () {
+      throw new UappiApiError(503, 'Uappi respondeu 503');
+    });
+    const connector = realConnector(client);
+    const error = await collect(
+      connector.readOrders(connector.parseSettings({}, secrets), window, { pseudonymizer, logger }),
+    ).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(UappiApiError);
+    expect(isCredentialsRejected(error)).toBe(false);
+  });
+
+  it('isCredentialsRejected also recognises the error by name (another module copy)', () => {
+    const foreign = Object.assign(new Error('x'), { name: 'CredentialsRejectedError' });
+    expect(isCredentialsRejected(foreign)).toBe(true);
+    expect(isCredentialsRejected(new Error('x'))).toBe(false);
+    expect(isCredentialsRejected('CredentialsRejectedError')).toBe(false);
   });
 
   it('records contain only hashed customer fields', async () => {

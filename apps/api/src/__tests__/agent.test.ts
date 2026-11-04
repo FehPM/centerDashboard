@@ -94,9 +94,33 @@ describe('buildSystemPrompt módulos', () => {
     expect(prompt).toContain('respondendo no painel');
     expect(prompt).not.toMatch(/respondendo por WhatsApp/);
   });
+
+  it('the scope section does not enumerate domains outside the given modules', () => {
+    const prompt = buildSystemPrompt('2026-03-15', ['Produtos']);
+    const scope = prompt.slice(prompt.indexOf('SEU ESCOPO'), prompt.indexOf('MÓDULOS DISPONÍVEIS'));
+    expect(scope).not.toMatch(/aplicativo|versões do app|origens de tráfego|sessões/);
+  });
 });
 
 describe('runAgent', () => {
+  it('the system prompt lists the data modules, never the assistant itself', async () => {
+    let system = '';
+    const model = new MockLanguageModelV2({
+      modelId: 'mock-sonnet',
+      doGenerate: async ({ prompt }) => {
+        const first = prompt[0] as { role: string; content: unknown };
+        if (first.role === 'system') system = String(first.content);
+        return {
+          finishReason: 'stop' as const, usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          content: [{ type: 'text' as const, text: 'ok' }], warnings: [],
+        };
+      },
+    });
+    await runAgent({ ...baseInput, gateway: buildGateway(), model });
+    expect(system).toContain('MÓDULOS DISPONÍVEIS: Visão geral');
+    expect(system).not.toContain('Assistente de IA');
+  });
+
   it('returns usage from the model response', async () => {
     const model = new MockLanguageModelV2({
       modelId: 'mock-sonnet',

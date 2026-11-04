@@ -28,7 +28,7 @@ function me(mustChangePassword: boolean): MeView {
     user: { id: 'u1', name: 'Ana', email: 'a@x.com', role: 'MEMBER', mustChangePassword },
     organization: { id: 'o1', name: 'Loja' },
     modules: [{ key: 'products', label: 'Produtos', menuPath: '/produtos', state: 'ready' }],
-    sources: ['commerce'], viewSession: false,
+    sources: ['commerce'], readySources: ['commerce'], commerceSync: null, viewSession: false,
   };
 }
 
@@ -47,7 +47,7 @@ describe('ChangePasswordPage', () => {
     const post = jest.fn();
     mswServer.use(
       http.get('/auth/me', () => HttpResponse.json(me(true))),
-      http.post('/auth/password', () => { post(); return new HttpResponse(null, { status: 204 }); }),
+      http.post('/auth/password', () => { post(); return HttpResponse.json({ token: 'novo' }); }),
     );
     renderWithProviders(<Tree />, { route: '/trocar-senha' });
     await fill('antiga', 'curta', 'curta');
@@ -61,15 +61,47 @@ describe('ChangePasswordPage', () => {
     expect(post).not.toHaveBeenCalled();
   });
 
-  it('success navigates home', async () => {
-    let changed = false;
+  it('refuses a new password equal to the current one before submitting', async () => {
+    const post = jest.fn();
     mswServer.use(
-      http.get('/auth/me', () => HttpResponse.json(me(!changed))),
-      http.post('/auth/password', () => { changed = true; return new HttpResponse(null, { status: 204 }); }),
+      http.get('/auth/me', () => HttpResponse.json(me(true))),
+      http.post('/auth/password', () => { post(); return HttpResponse.json({ token: 'novo' }); }),
+    );
+    renderWithProviders(<Tree />, { route: '/trocar-senha' });
+    await fill('senha-provisoria-1', 'senha-provisoria-1', 'senha-provisoria-1');
+    expect(await screen.findByText('A nova senha precisa ser diferente da senha atual.')).toBeInTheDocument();
+    expect(post).not.toHaveBeenCalled();
+  });
+
+  it('shows the server 400 when the new password repeats the current one', async () => {
+    mswServer.use(
+      http.get('/auth/me', () => HttpResponse.json(me(true))),
+      http.post('/auth/password', () => HttpResponse.json(
+        { error: 'bad_request', message: 'a nova senha precisa ser diferente da senha atual' }, { status: 400 },
+      )),
+    );
+    renderWithProviders(<Tree />, { route: '/trocar-senha' });
+    await fill('antiga-longa-1', 'senha-nova-longa', 'senha-nova-longa');
+    expect(await screen.findByText('a nova senha precisa ser diferente da senha atual')).toBeInTheDocument();
+    expect(getAuthToken()).toBe('t');
+  });
+
+  it('success stores the fresh token from the response and navigates home', async () => {
+    let changed = false;
+    const seenTokens: Array<string | null> = [];
+    mswServer.use(
+      http.get('/auth/me', ({ request }) => {
+        seenTokens.push(request.headers.get('authorization'));
+        return HttpResponse.json(me(!changed));
+      }),
+      http.post('/auth/password', () => { changed = true; return HttpResponse.json({ token: 'token-novo' }); }),
     );
     renderWithProviders(<Tree />, { route: '/trocar-senha' });
     await fill('antiga', 'senha-nova-longa', 'senha-nova-longa');
     expect(await screen.findByText('home')).toBeInTheDocument();
+    // A troca derruba o token antigo: a sessão segue com o novo.
+    expect(getAuthToken()).toBe('token-novo');
+    expect(seenTokens.at(-1)).toBe('Bearer token-novo');
   });
 
   it('wrong current password shows the message and keeps the session', async () => {

@@ -60,7 +60,12 @@ esta página e o design.
 - **Modelo canônico de commerce = tabelas atuais** (`CommerceOrder` etc.), sem
   `integrationId` e sem renomear campos no MVP.
 - **Usuários do cliente:** o Admin cria com senha provisória
-  (`mustChangePassword`); sem e-mail no MVP.
+  (`mustChangePassword`); sem e-mail no MVP. A nova senha não pode repetir a
+  atual, e trocar ou redefinir a senha derruba as sessões abertas
+  (`User.passwordChangedAt`).
+- **Falha de sync** não esconde dados: fica em `SyncState.lastError` e o
+  painel avisa "dados atualizados até…". `Integration.status = ERROR` só para
+  credencial recusada (ou segredo inválido).
 - **Fora do MVP:** WhatsApp, planos/cobrança integrada, cliente editando
   credencial, papéis customizados, segunda plataforma de e-commerce.
 
@@ -106,7 +111,8 @@ Quebrar qualquer um destes é bug crítico.
 - Erros: 403 `module_not_available` (sem revelar se é contrato ou permissão),
   403 `organization_suspended` / `password_change_required` /
   `readonly_session` / `forbidden`, 409 `integration_pending`, 502 para falha
-  de fonte externa, 401 para token inválido ou usuário desativado.
+  de fonte externa, 401 para token inválido, usuário desativado ou token
+  emitido antes da última troca/redefinição de senha.
 
 ## Stack e estrutura
 
@@ -137,7 +143,7 @@ variáveis de ambiente que declara em `apps/api/src/main.ts`.
 ```bash
 docker compose up -d                 # Postgres + Redis locais
 pnpm install
-pnpm test                            # todos os testes
+pnpm test                            # todos os testes (DATABASE_URL de um banco *_test; ver README)
 pnpm typecheck
 pnpm -w build                        # compila tudo
 

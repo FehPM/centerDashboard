@@ -171,6 +171,24 @@ describe('internal integrations', () => {
     await app.close();
   });
 
+  it('check on a DISABLED integration records the result but keeps it DISABLED', async () => {
+    const cipher = encryptSecrets(new SecretBox(testConfig.credentialsEncryptionKey), { apiKey: 'a', secretKey: 'b' });
+    const fake = integrationFake(row('COMMERCE', { provider: 'UAPPI', status: 'DISABLED', secrets: cipher }));
+    fake.integration.update.mockImplementation(async (args: { data: Record<string, unknown> }) => (
+      row('COMMERCE', { provider: 'UAPPI', secrets: cipher, ...args.data })
+    ));
+    const { app } = await internalApp(fake);
+    const res = await app.inject({
+      method: 'POST', url: '/internal/organizations/org_1/integrations/COMMERCE/check', headers: headers(),
+    });
+    expect(res.statusCode).toBe(200);
+    const data = (fake.integration.update.mock.calls[0] as unknown as [{ data: Record<string, unknown> }])[0].data;
+    expect(data.status).toBe('DISABLED');
+    expect(data.lastCheckAt).toBeInstanceOf(Date);
+    expect(res.json().status).toBe('DISABLED');
+    await app.close();
+  });
+
   it('check on WEB_ANALYTICS → 400', async () => {
     const { app } = await internalApp(integrationFake());
     const res = await app.inject({

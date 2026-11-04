@@ -207,7 +207,12 @@ export async function registerUserRoutes(app: FastifyInstance, deps: AppDeps): P
       if (!target) return reply.status(404).send(NOT_FOUND);
       await prisma.user.update({
         where: { id: target.id },
-        data: { passwordHash: await hashPassword(parsed.data.temporaryPassword), mustChangePassword: true },
+        // passwordChangedAt derruba as sessões abertas do usuário.
+        data: {
+          passwordHash: await hashPassword(parsed.data.temporaryPassword),
+          mustChangePassword: true,
+          passwordChangedAt: new Date(),
+        },
       });
       return reply.status(204).send();
     },

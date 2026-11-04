@@ -83,11 +83,47 @@ describe('internal users', () => {
     expect(reset.statusCode).toBe(200);
     const data = (update.mock.calls[1] as unknown as [{ data: Record<string, unknown> }])[0].data;
     expect(data.mustChangePassword).toBe(true);
+    expect(data.passwordChangedAt).toBeInstanceOf(Date);
     const calls = auditCreate.mock.calls as unknown as AuditCalls;
     expect(calls.map((c) => [c[0].data.action, c[0].data.organizationId])).toEqual([
       ['user.deactivate', 'org_9'], ['user.reset_password', 'org_9'],
     ]);
     expect(JSON.stringify(calls)).not.toContain('nova-senha-provisoria');
+    await app.close();
+  });
+});
+
+describe('internal reset-password and client sessions', () => {
+  it('a reset by the Blan operator ends the user\'s open sessions (old token → 401)', async () => {
+    const { hashPassword } = await import('../auth/password.js');
+    const row: Record<string, unknown> = {
+      id: 'u_1', email: 'ana@loja.com', name: 'Ana', role: 'ADMIN', organizationId: 'org_9',
+      passwordHash: await hashPassword('senha-atual-longa'), active: true, mustChangePassword: false,
+      passwordChangedAt: null,
+    };
+    const { app } = await internalApp({
+      user: {
+        findUnique: jest.fn(async () => row),
+        update: jest.fn(async ({ data }: { data: Record<string, unknown> }) => Object.assign(row, data)),
+      },
+      organization: { findUnique: jest.fn(async () => ({ id: 'org_9', name: 'Loja', status: 'ACTIVE' })) },
+    });
+    const login = await app.inject({
+      method: 'POST', url: '/auth/login', payload: { email: 'ana@loja.com', password: 'senha-atual-longa' },
+    });
+    const client = { authorization: `Bearer ${login.json().token as string}` };
+    // Rota de cliente que só depende de app.authenticate antes do handler.
+    const probe = () => app.inject({
+      method: 'POST', url: '/auth/password', headers: client, payload: {},
+    });
+    expect((await probe()).statusCode).toBe(400);
+
+    const reset = await app.inject({
+      method: 'POST', url: '/internal/users/u_1/reset-password', headers: headers(),
+      payload: { temporaryPassword: 'nova-senha-provisoria' },
+    });
+    expect(reset.statusCode).toBe(200);
+    expect((await probe()).statusCode).toBe(401);
     await app.close();
   });
 });

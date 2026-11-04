@@ -1,6 +1,6 @@
 import type { PrismaClient } from '@prisma/client';
 import type { FastifyReply, FastifyRequest, preHandlerAsyncHookHandler } from 'fastify';
-import type { AuthPayload } from '../auth/jwt.js';
+import { issuedBeforePasswordChange, type AuthPayload } from '../auth/jwt.js';
 
 export interface Principal {
   userId: string;
@@ -76,10 +76,14 @@ export function makeAuthenticate(prisma: PrismaClient): preHandlerAsyncHookHandl
 
     const user = await prisma.user.findUnique({
       where: { id: decoded.userId },
-      select: { active: true, role: true, mustChangePassword: true, organizationId: true },
+      select: { active: true, role: true, mustChangePassword: true, organizationId: true, passwordChangedAt: true },
     });
-    // O token só vale para o cliente do próprio usuário.
-    if (!user || !user.active || user.organizationId !== decoded.organizationId) {
+    // O token só vale para o cliente do próprio usuário, e só se foi emitido
+    // depois da última troca/redefinição de senha (sessões antigas caem).
+    if (
+      !user || !user.active || user.organizationId !== decoded.organizationId
+      || issuedBeforePasswordChange(decoded.iat, user.passwordChangedAt ?? null)
+    ) {
       await deny(reply, 401, 'unauthorized', 'token ausente ou inválido');
       return;
     }

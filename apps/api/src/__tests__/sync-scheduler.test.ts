@@ -5,13 +5,22 @@ import type { ConnectorRegistry } from '@center/connectors';
 import { syncAllOrganizations } from '../sync/scheduler.js';
 import { testConfig } from './helpers/config.js';
 
-jest.mock('@center/connectors', () => ({
-  runCommerceSync: jest.fn(async () => ({
-    ordersProcessed: 3, ordersFailed: 0, from: '2026-07-01', to: '2026-07-20',
-  })),
-}));
+jest.mock('@center/connectors', () => {
+  const actual = jest.requireActual('@center/connectors');
+  return {
+    // A classificação de erro é a real: o scheduler decide o status por ela.
+    CredentialsRejectedError: actual.CredentialsRejectedError,
+    isCredentialsRejected: actual.isCredentialsRejected,
+    runCommerceSync: jest.fn(async () => ({
+      ordersProcessed: 3, ordersFailed: 0, from: '2026-07-01', to: '2026-07-20',
+    })),
+  };
+});
 // eslint-disable-next-line @typescript-eslint/no-var-requires
-const { runCommerceSync } = require('@center/connectors') as { runCommerceSync: jest.Mock };
+const { runCommerceSync, CredentialsRejectedError } = require('@center/connectors') as {
+  runCommerceSync: jest.Mock;
+  CredentialsRejectedError: new (message?: string) => Error;
+};
 
 // Os segredos chegam do Postgres como um único JSON cifrado; o fake abaixo
 // simula o decrypt como identidade, então o "texto cifrado" já é o JSON.
@@ -103,11 +112,45 @@ describe('syncAllOrganizations', () => {
     runCommerceSync
       .mockRejectedValueOnce(new Error('Uappi 503'))
       .mockResolvedValueOnce({ ordersProcessed: 1, ordersFailed: 0, from: 'a', to: 'b' });
+    const { deps } = buildDeps([row('org_1'), row('org_2')]);
+    expect(await syncAllOrganizations(deps)).toEqual({ organizations: 2, succeeded: 1, failed: 1 });
+    expect(runCommerceSync).toHaveBeenCalledTimes(2);
+  });
+
+  // Decisão do responsável (2026-11-04): falha passageira não tira o
+  // commerce do ar. O erro fica em SyncState.lastError (gravado pelo runner)
+  // e o status da integração — que decide se a fonte está pronta — não muda.
+  it('a transient sync failure keeps the integration status (data routes stay up)', async () => {
+    runCommerceSync.mockRejectedValueOnce(new Error('Uappi respondeu 503 em /v2/orders'));
+    const { deps, update } = buildDeps([row('org_1')]);
+    expect(await syncAllOrganizations(deps)).toEqual({ organizations: 1, succeeded: 0, failed: 1 });
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it('a transient failure on a PENDING integration does not flip it to ERROR either', async () => {
+    runCommerceSync.mockRejectedValueOnce(new Error('timeout'));
+    const { deps, update } = buildDeps([row('org_1', { status: 'PENDING' })]);
+    await syncAllOrganizations(deps);
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it('rejected credentials mark the integration ERROR with the fixed connector message', async () => {
+    runCommerceSync.mockRejectedValueOnce(new CredentialsRejectedError('credenciais recusadas pela Uappi'));
     const { deps, update } = buildDeps([row('org_1'), row('org_2')]);
     expect(await syncAllOrganizations(deps)).toEqual({ organizations: 2, succeeded: 1, failed: 1 });
+    expect(update).toHaveBeenCalledTimes(1);
     expect(update).toHaveBeenCalledWith({
       where: { id: 'int_org_1' },
-      data: expect.objectContaining({ status: 'ERROR', lastError: 'Uappi 503' }),
+      data: expect.objectContaining({ status: 'ERROR', lastError: 'credenciais recusadas pela Uappi' }),
+    });
+  });
+
+  it('promotes ERROR back to OK after a successful run', async () => {
+    const { deps, update } = buildDeps([row('org_1', { status: 'ERROR' })]);
+    await syncAllOrganizations(deps);
+    expect(update).toHaveBeenCalledWith({
+      where: { id: 'int_org_1' },
+      data: expect.objectContaining({ status: 'OK', lastError: null }),
     });
   });
 
@@ -142,9 +185,13 @@ describe('syncAllOrganizations', () => {
   });
 
   it('an unknown provider fails that integration and the next one still syncs', async () => {
-    const { deps } = buildDeps([row('org_1', { provider: 'NOPE' }), row('org_2')]);
+    const { deps, update } = buildDeps([row('org_1', { provider: 'NOPE' }), row('org_2')]);
     (deps.connectors.get as jest.Mock).mockImplementationOnce(() => { throw new Error('provedor desconhecido'); });
     expect(await syncAllOrganizations(deps)).toEqual({ organizations: 2, succeeded: 1, failed: 1 });
+    expect(update).toHaveBeenCalledWith({
+      where: { id: 'int_org_1' },
+      data: expect.objectContaining({ status: 'ERROR', lastError: 'conector desconhecido' }),
+    });
     expect(runCommerceSync).toHaveBeenCalledTimes(1);
     expect(runCommerceSync).toHaveBeenCalledWith(
       expect.objectContaining({ organizationId: 'org_2' }), expect.anything(),
@@ -152,7 +199,7 @@ describe('syncAllOrganizations', () => {
   });
 
   it('a failing status write in the error path does not stop the next organization', async () => {
-    runCommerceSync.mockRejectedValueOnce(new Error('Uappi 503'));
+    runCommerceSync.mockRejectedValueOnce(new CredentialsRejectedError('credenciais recusadas pela Uappi'));
     const { deps, update } = buildDeps([row('org_1'), row('org_2')]);
     update.mockRejectedValueOnce(new Error('db down'));
     expect(await syncAllOrganizations(deps)).toEqual({ organizations: 2, succeeded: 1, failed: 1 });

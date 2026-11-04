@@ -20,6 +20,7 @@ interface Options {
   grants?: string[];
   failAccess?: boolean;
   integrations?: Array<{ kind: string; status: string; config: unknown }>;
+  syncState?: { lastSyncedAt: Date | null; lastError: string | null } | null;
 }
 
 async function setup(options: Options) {
@@ -54,6 +55,7 @@ async function setup(options: Options) {
         { kind: 'APP_ANALYTICS', status: 'OK', config: {} },
       ]),
     },
+    syncState: { findUnique: jest.fn(async () => options.syncState ?? null) },
   } as unknown as PrismaClient;
   const app = await buildServer({
     config: testConfig, prisma, gateway,
@@ -191,6 +193,34 @@ describe('module access', () => {
       { key: 'acquisition', label: 'Aquisição', menuPath: '/aquisicao', state: 'awaiting_setup' },
     ]);
     expect([...me.sources].sort()).toEqual(['behavior', 'commerce', 'ga4']);
+    // GA4 liberado mas não configurado: fora das fontes prontas.
+    expect(me.readySources).toEqual(['commerce']);
+    await ctx.app.close();
+  });
+
+  it('/auth/me exposes the commerce sync status without the error text', async () => {
+    const ctx = await setup({
+      contracts: [long('overview')],
+      integrations: [{ kind: 'COMMERCE', status: 'OK', config: {} }],
+      syncState: { lastSyncedAt: new Date('2026-11-03T21:30:00Z'), lastError: 'Uappi respondeu 503: corpo cru' },
+    });
+    const response = await ctx.app.inject({ method: 'GET', url: '/auth/me', headers: ctx.headers });
+    expect(response.json().commerceSync).toEqual({
+      lastSyncedAt: '2026-11-03T21:30:00.000Z', lastAttemptFailed: true,
+    });
+    expect(response.body).not.toContain('corpo cru');
+    // Falha passageira não tira o módulo do ar: overview segue pronto.
+    expect(response.json().modules).toEqual([
+      { key: 'overview', label: 'Visão geral', menuPath: '/', state: 'ready' },
+    ]);
+    await ctx.app.close();
+  });
+
+  it('/auth/me has no commerceSync when commerce is not a visible source', async () => {
+    const ctx = await setup({ contracts: [long('app_usage')] });
+    const me = (await ctx.app.inject({ method: 'GET', url: '/auth/me', headers: ctx.headers })).json();
+    expect(me.commerceSync).toBeNull();
+    expect(me.readySources).toEqual(['firebase']);
     await ctx.app.close();
   });
 });

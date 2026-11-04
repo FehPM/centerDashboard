@@ -8,6 +8,8 @@ interface KpiCardProps {
   previousValue?: number;
   isLoading?: boolean;
   error?: Error | null;
+  /** Fonte liberada, mas a integração ainda não está pronta: nada é consultado. */
+  awaitingSetup?: boolean;
 }
 
 const percent = new Intl.NumberFormat('pt-BR', {
@@ -18,7 +20,9 @@ const percent = new Intl.NumberFormat('pt-BR', {
  * Número-herói sem gráfico. A variação carrega SEMPRE uma palavra ("aumento"
  * / "queda") além da cor — cor sozinha não é canal acessível.
  */
-export function KpiCard({ label, value, unit, previousValue, isLoading = false, error = null }: KpiCardProps) {
+export function KpiCard({
+  label, value, unit, previousValue, isLoading = false, error = null, awaitingSetup = false,
+}: KpiCardProps) {
   const hasDelta = previousValue !== undefined && previousValue !== 0;
   const deltaRatio = hasDelta ? ((value - previousValue) / Math.abs(previousValue)) * 100 : 0;
   const rising = deltaRatio >= 0;
@@ -29,7 +33,11 @@ export function KpiCard({ label, value, unit, previousValue, isLoading = false, 
         {label}
       </p>
 
-      {isLoading ? (
+      {awaitingSetup ? (
+        <p className="mt-2 text-sm" style={{ color: 'var(--text-secondary)' }}>
+          Aguardando configuração: a equipe Blan está configurando esta integração.
+        </p>
+      ) : isLoading ? (
         <div role="status" className="mt-2 h-8 w-24 animate-pulse rounded" style={{ backgroundColor: 'var(--gridline)' }}>
           <span className="sr-only">Carregando {label}</span>
         </div>

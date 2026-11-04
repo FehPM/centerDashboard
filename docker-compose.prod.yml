@@ -54,9 +54,17 @@ services:
   sync:
     build: { context: ., target: runtime }
     env_file: ['${ENV_FILE:-.env}']
+    # Mesmas chaves que a `api` recebe: o worker roda o mesmo loadConfig, que
+    # exige OPERATOR_JWT_SECRET. Sem elas aqui, uma variável definida só no
+    # shell (e não no ENV_FILE) derrubaria o sync em loop de reinício.
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?schema=public
       REDIS_URL: redis://redis:6379
+      TRUST_PROXY_HOPS: ${TRUST_PROXY_HOPS:-1}
+      OPERATOR_JWT_SECRET: ${OPERATOR_JWT_SECRET:?defina OPERATOR_JWT_SECRET (>=32 caracteres, diferente de JWT_SECRET)}
+      PANEL_ORIGIN: ${PANEL_ORIGIN:-http://localhost:3333}
+      BACKOFFICE_ORIGIN: ${BACKOFFICE_ORIGIN:-http://localhost:8080}
+      MONDAY_API_TOKEN: ${MONDAY_API_TOKEN:-}
     depends_on:
       api: { condition: service_started }
     command: node dist/sync/sync-worker-main.js

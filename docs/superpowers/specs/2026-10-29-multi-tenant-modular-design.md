@@ -311,7 +311,8 @@ diz se o problema é contrato ou permissão.
 Outros códigos de recusa, todos 403: `organization_suspended`,
 `password_change_required` (enquanto `mustChangePassword`), `readonly_session`
 (sessão de visualização numa rota que não é de leitura) e `forbidden` (papel).
-Usuário desativado ou token de outro mundo → 401.
+Usuário desativado, token de outro mundo ou token emitido antes da última troca
+ou redefinição de senha (`User.passwordChangedAt`) → 401.
 
 A checagem é feita **a cada requisição, lendo o banco**: nada de módulo ou
 permissão vai dentro do token. Assim, suspender um módulo, desativar um
@@ -326,8 +327,13 @@ token expirar. Ela acontece em três lugares, todos com as mesmas funções de
   ferramentas cujas fontes estão liberadas. O system prompt lista só os
   módulos visíveis.
 - **Menu:** `GET /auth/me` (rota que já existe) passa a devolver também os
-  módulos visíveis com o estado de cada um (`ready` | `awaiting_setup`). O
-  front só usa isso para esconder itens; quem protege é a API.
+  módulos visíveis com o estado de cada um (`ready` | `awaiting_setup`), as
+  fontes liberadas (`sources`), as liberadas **e prontas** (`readySources`) e,
+  quando o usuário vê `commerce`, o status do sync da loja (`commerceSync`:
+  `lastSyncedAt` e `lastAttemptFailed`, nunca a mensagem de erro). O front só
+  usa isso para esconder itens e escolher o que consultar — a Visão geral só
+  pede métricas de `readySources`; os cards de uma fonte pendente mostram
+  "aguardando configuração". Quem protege é a API.
 
 ### 7.3 "Aguardando configuração"
 Cada fonte exige uma integração com `status = OK` (basta uma da lista):
@@ -386,8 +392,19 @@ interface CommerceConnector<TSettings> {
 - **Registro:** um mapa `provider → connector`. O sync worker percorre as
   integrações `COMMERCE` de clientes ativos e chama o conector do provider.
 - **`check`** é chamado pelo back-office ao salvar a integração e grava
-  `status` e `lastError` em `Integration`. Um sync que falha grava o erro em
-  `SyncState.lastError`, como hoje.
+  `status` e `lastError` em `Integration`. "Testar" numa integração
+  `DISABLED` grava o resultado, mas não a religa.
+- **Falha de sync** *(decisão do responsável, 2026-11-04)*:
+  - um sync que falha grava o erro em `SyncState.lastError`, como hoje, e
+    **não** muda `Integration.status`. O cliente continua vendo os dados já
+    sincronizados, com o aviso "dados da loja atualizados até
+    `<lastSyncedAt>`" nos módulos de commerce; a causa nunca aparece para ele;
+  - `Integration.status = ERROR` fica para o que não se resolve sozinho:
+    **credencial recusada** pelo provedor (o conector lança
+    `CredentialsRejectedError`; na Uappi, HTTP 401/403 no token ou na
+    listagem), segredos que não decifram ou não validam no `parseSettings`, e
+    provedor desconhecido;
+  - um sync bem-sucedido promove a integração a `OK`, inclusive de `ERROR`.
 
 ## 9. Back-office (MVP)
 
@@ -430,6 +447,12 @@ Toda ação que altera dados grava em `OperatorAuditLog`.
   desativar a si mesmo nem rebaixar o último Admin do cliente.
 - **Primeiro acesso:** `mustChangePassword = true` → o usuário só consegue
   acessar a tela de troca de senha até trocar.
+- **Troca e redefinição de senha** *(decisão do responsável, 2026-11-04)*: a
+  nova senha precisa ser diferente da atual (400 com mensagem em português),
+  inclusive na troca obrigatória. Trocar a senha, ou tê-la redefinida pelo
+  Admin do cliente ou pela Blan, grava `User.passwordChangedAt` e derruba
+  todos os tokens emitidos antes (401). Quem troca recebe um token novo na
+  mesma resposta e continua logado. Sessões de visualização não são afetadas.
 - **Configurações:** passa a mostrar só o status das integrações (conectada,
   com erro, última sincronização), sem campos de credencial.
   `PUT /api/settings/integrations` deixa de existir.
@@ -539,3 +562,32 @@ projetos separados.
 | Permissões lidas do banco a cada requisição, nunca do token | Design (revisão) |
 | `/auth/me` estendida em vez de `/api/me` | Design (revisão) |
 | Back-office estático em container próprio, chamando a API com CORS | Design (revisão) |
+| Falha passageira de sync não esconde os dados: o cliente vê "dados atualizados até `<lastSyncedAt>`"; o erro fica em `SyncState.lastError`; `Integration.status = ERROR` só para credencial recusada (§8) | Responsável pelo produto (2026-11-04) |
+| Remoção das colunas legadas em release separado e posterior, depois do `migrate-to-multitenant` em produção e do teste da guarda numa cópia da produção (`docs/deploy.md`) | Responsável pelo produto (2026-11-04) |
+| Nova senha não pode repetir a atual, inclusive na troca obrigatória (§10) | Responsável pelo produto (2026-11-04) |
+| Trocar ou redefinir a senha derruba as sessões abertas (`User.passwordChangedAt`); quem trocou recebe token novo (§10) | Responsável pelo produto (2026-11-04) |
+
+### 14.1 Questões em aberto
+
+Levantadas na revisão final da branch (2026-11-04). O código já assume a
+resposta da coluna "Hoje"; nenhuma tem código pendente. Decidir antes do item
+indicado em "Custo se errado" virar realidade.
+
+| # | Questão | Hoje | Recomendação | Custo se errado |
+|---|---|---|---|---|
+| 1 | Integrações sem verificação automática (GA4, lojas de apps, Monday) ficam `OK` só por salvar? | Sim: o módulo fica `ready` antes de o cliente conceder acesso à service account, e as consultas dão 502 "fonte de dados indisponível" | Aceitável no MVP; depois, `PENDING` até um primeiro teste com sucesso, ou um botão "Testar" para GA4 | A Blan acha que o cliente está pronto e ele vê cards vermelhos |
+| 2 | E-mail diferencia maiúsculas? | Sim, em `User` e `PlatformOperator`: "Ana@x.com" e "ana@x.com" são contas distintas, e o login exige a mesma grafia | Normalizar (trim + minúsculas) ao criar e ao logar, com uma migração de dados; antes do segundo cliente real | Usuário que não consegue entrar e contas duplicadas |
+| 3 | Desativar um operador encerra na hora as visualizações abertas por ele? | Não: o token de visualização vale até 30 min | Sim, por coerência com o "na próxima requisição" do §7.2: uma consulta a `PlatformOperator.active` quando há `viewedBy` | Até 30 min de acesso de leitura de um ex-operador |
+| 4 | A desativação de um usuário feita pela Blan pode ser desfeita pelo Admin do cliente? | Pode: o operador desativa qualquer usuário (inclusive o último Admin), e o Admin pode reativar quem a Blan desativou | Manter o poder do operador, mas marcar a desativação da Blan (ex.: `deactivatedByOperator`) e travá-la para o cliente | A Blan bloqueia por segurança e o cliente desfaz |
+| 5 | Grants de um módulo suspenso | Ficam dormentes e invisíveis; o Admin não consegue revogá-los até o módulo voltar, e na reativação o Membro volta a ver | Manter (segue o §6.1), mas mostrar ao Admin "acessos guardados de módulos suspensos" | Um Membro que o Admin queria remover recupera o acesso na reativação |
+| 6 | Análise de versão do app exige `app_usage` **e** as fontes `commerce` + `ga4` | Um cliente só com app não usa a funcionalidade | Manter, porque a análise mostra receita; confirmar que é aceitável comercialmente | A funcionalidade some para esse perfil de cliente |
+| 7 | Como um operador recupera o acesso se perder o autenticador ou esquecer a senha? | Não há fluxo: só SQL no banco, o que contradiz "sem acessar o banco" (§1); o operador também não troca a própria senha | Outro operador pode "redefinir TOTP" e "redefinir senha" no back-office, com auditoria | Operador trancado, ou um DBA mexendo direto em produção |
+| 8 | Um Admin do cliente pode redefinir a senha de outro Admin? | Pode: ele escolhe a provisória e consegue entrar como o outro Admin, sem trilha de auditoria do lado do cliente (a redefinição já derruba as sessões do alvo) | Aceitável no MVP; auditoria das ações do Admin do cliente no roadmap | Sem rastreabilidade dentro do cliente |
+| 9 | Trocar uma credencial Uappi exige redigitar as duas chaves? | Sim | Manter; o custo é só operacional | Retrabalho do operador |
+| 10 | Portas da API e do back-office só em loopback por padrão? | Sim (`API_BIND`/`BACKOFFICE_BIND` = `127.0.0.1`) | Manter | Quem tem o proxy em outra máquina precisa definir as variáveis |
+| 11 | Dados de cliente encerrado: retenção, exclusão, exportação | "Suspenso, os dados ficam", sem exclusão, retenção nem exportação; não há como apagar um cliente | Definir a política de retenção (LGPD) antes de vender a terceiros | Obrigação legal sem ferramenta para cumpri-la |
+| 12 | Tentativas de login falhas e bloqueios de operador vão para a auditoria? | Só o login bem-sucedido (`operator.login`) é auditado | Registrar o bloqueio (`operator.totp_locked`) | Um ataque ao back-office só aparece nos logs da aplicação |
+| 13 | O código deve recusar `MOCK_EXTERNAL_APIS="true"` com `NODE_ENV=production`, e o `db:seed` deve recusar rodar em produção? | Só a documentação proíbe | Sim, uma linha de recusa em cada um | Dados falsos para clientes reais, ou um Admin com senha publicada |
+| 14 | Vencimento de módulo (`endsAt`) sem aviso | O módulo some do menu do cliente sem explicação; o back-office não alerta vencimentos próximos | Alerta no back-office para a Blan renovar | Cliente perde acesso em silêncio e reclama |
+| 15 | `GET /api/settings/integrations` (status, só leitura) vale numa sessão de visualização? *(revisão, Minor 2)* | Não está marcada `readonlySafe`, então dá 403 `readonly_session`; a UI já esconde Configurações na visualização | Decidir se a Blan precisa ver essa tela como o cliente vê; se sim, marcar a rota | Nenhum hoje; só a tela fica indisponível na visualização |
+| 16 | Uma janela de sync em que **todos** os pedidos falham deve avançar o cursor? *(revisão, ledger T5)* | Avança (já era assim antes da branch): uma mudança de contrato da Uappi perderia pedidos fora dos 3 dias de sobreposição | Não avançar quando `ordersProcessed = 0` e `ordersFailed > 0`, e gravar `lastError` | Pedidos perdidos em silêncio depois de uma mudança na API da Uappi |

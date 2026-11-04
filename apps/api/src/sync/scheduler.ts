@@ -1,7 +1,7 @@
 import type { PrismaClient } from '@prisma/client';
 import type { Pseudonymizer } from '@center/pii';
 import type { SecretBox } from '@center/secrets';
-import { runCommerceSync, type ConnectorRegistry } from '@center/connectors';
+import { isCredentialsRejected, runCommerceSync, type ConnectorRegistry } from '@center/connectors';
 import type { AppConfig } from '../config.js';
 import { decryptSecrets } from '../integrations/repository.js';
 
@@ -31,6 +31,15 @@ export interface SchedulerReport {
  * previsível por contenção imprevisível. Uma falha nunca interrompe as demais:
  * nem a do sync, nem a de um provedor desconhecido, nem a de uma gravação de
  * status no banco. Cada integração é contada exatamente uma vez.
+ *
+ * `Integration.status` (decisão do responsável, 2026-11-04):
+ * - `ERROR` só quando a integração não tem como funcionar sem a Blan mexer:
+ *   credencial recusada pelo provedor (`CredentialsRejectedError`), segredos
+ *   que não decifram/validam, ou provedor desconhecido;
+ * - uma falha passageira (provedor fora do ar, timeout, resposta inesperada)
+ *   NÃO mexe no status: o runner já gravou `SyncState.lastError` (spec §8) e o
+ *   cliente continua vendo os dados sincronizados até `lastSyncedAt`;
+ * - um sync bem-sucedido promove a `OK` (inclusive de `ERROR`).
  */
 export async function syncAllOrganizations(deps: SchedulerDeps): Promise<SchedulerReport> {
   const log = deps.logger ?? (() => {});
@@ -71,7 +80,17 @@ export async function syncAllOrganizations(deps: SchedulerDeps): Promise<Schedul
 
   for (const integration of integrations) {
     try {
-      const connector = deps.connectors.get(integration.provider as 'UAPPI');
+      let connector;
+      try {
+        connector = deps.connectors.get(integration.provider as 'UAPPI');
+      } catch {
+        failed += 1;
+        await writeStatus(integration, { status: 'ERROR', lastError: 'conector desconhecido' });
+        log('conector desconhecido na integração', {
+          organizationId: integration.organizationId, provider: integration.provider,
+        });
+        continue;
+      }
 
       let settings;
       try {
@@ -98,9 +117,17 @@ export async function syncAllOrganizations(deps: SchedulerDeps): Promise<Schedul
         }, { backfillDays: deps.config.syncBackfillDays });
       } catch (error) {
         failed += 1;
-        const message = describe(error);
-        await writeStatus(integration, { status: 'ERROR', lastError: message });
-        log('falha no sync da organização', { organizationId: integration.organizationId, error: message });
+        if (isCredentialsRejected(error)) {
+          // Mensagem fixa do conector, sem corpo da resposta do provedor.
+          await writeStatus(integration, { status: 'ERROR', lastError: error.message });
+          log('credenciais recusadas pelo provedor', { organizationId: integration.organizationId });
+        } else {
+          // Falha passageira: `SyncState.lastError` já foi gravado pelo runner.
+          // O status fica como está, e os módulos de commerce seguem no ar.
+          log('falha no sync da organização', {
+            organizationId: integration.organizationId, error: describe(error),
+          });
+        }
         continue;
       }
 
@@ -116,12 +143,17 @@ export async function syncAllOrganizations(deps: SchedulerDeps): Promise<Schedul
         failedOrders: result.ordersFailed,
       });
     } catch (error) {
-      // Rede de segurança (ex.: provedor desconhecido no registro). Só
-      // organizationId e mensagem vão para o log — nunca segredos.
+      // Rede de segurança para o inesperado (ex.: o próprio logger falhando).
+      // Não sabemos a causa, então não mexemos no status. Só organizationId e
+      // mensagem vão para o log — nunca segredos.
       failed += 1;
-      const message = describe(error);
-      await writeStatus(integration, { status: 'ERROR', lastError: message });
-      log('falha no sync da organização', { organizationId: integration.organizationId, error: message });
+      try {
+        log('falha no sync da organização', {
+          organizationId: integration.organizationId, error: describe(error),
+        });
+      } catch {
+        // logger quebrado: nada a fazer além de seguir para a próxima.
+      }
     }
   }
 

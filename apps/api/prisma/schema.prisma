@@ -104,6 +104,8 @@ model User {
   organizationId     String
   mustChangePassword Boolean  @default(false)
   active             Boolean  @default(true)
+  /// Última troca ou redefinição de senha. Tokens com `iat` anterior valem 401.
+  passwordChangedAt  DateTime?
   createdAt          DateTime @default(now())
 
   organization     Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)

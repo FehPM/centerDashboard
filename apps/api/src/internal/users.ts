@@ -84,7 +84,12 @@ export async function registerInternalUserRoutes(scope: FastifyInstance, deps: A
     if (!user) return reply.status(404).send(USER_NOT_FOUND);
     await prisma.user.update({
       where: { id: user.id },
-      data: { passwordHash: await hashPassword(body.data.temporaryPassword), mustChangePassword: true },
+      // passwordChangedAt derruba as sessões abertas do usuário.
+      data: {
+        passwordHash: await hashPassword(body.data.temporaryPassword),
+        mustChangePassword: true,
+        passwordChangedAt: new Date(),
+      },
     });
     await recordAudit(prisma, request, {
       action: 'user.reset_password', organizationId: user.organizationId, targetType: 'User', targetId: user.id,

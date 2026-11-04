@@ -115,6 +115,47 @@ describe('OverviewPage', () => {
     expect(screen.queryByText('Feedback recebido')).not.toBeInTheDocument();
   });
 
+  // I2: Aquisição em vigor com o GA4 ainda pendente (o normal no onboarding).
+  it('a pending source is not queried: its cards wait for setup and the commerce cards keep working', async () => {
+    const handler = jest.fn();
+    mockEndpoints(handler);
+    mswServer.use(meHandler({
+      modules: [MODULES.overview!, { ...MODULES.acquisition!, state: 'awaiting_setup' }],
+      sources: ['commerce', 'ga4', 'behavior'],
+      readySources: ['commerce'],
+    }));
+    renderWithProviders(<OverviewPage today="2026-03-15" />, { route: '/' });
+    await waitFor(() => expect(handler).toHaveBeenCalled());
+    const ids = handler.mock.calls[0][0].queries.map((q: { metricId: string }) => q.metricId);
+    expect(ids).toEqual(['commerce.revenue', 'commerce.orders', 'commerce.average_ticket', 'commerce.new_customers']);
+    expect(await screen.findByText('R$ 4.800,00')).toBeInTheDocument();
+    expect(screen.getAllByText(/Aguardando configuração/)).toHaveLength(2);
+    expect(screen.getByText('Sessões')).toBeInTheDocument();
+    expect(screen.queryAllByRole('alert')).toHaveLength(0);
+  });
+
+  it('shows a non-blocking "updated until" notice when the last sync failed', async () => {
+    mockEndpoints();
+    mswServer.use(meHandler({
+      modules: [MODULES.overview!], sources: ['commerce'],
+      commerceSync: { lastSyncedAt: '2026-03-14T21:30:00.000Z', lastAttemptFailed: true },
+    }));
+    renderWithProviders(<OverviewPage today="2026-03-15" />, { route: '/' });
+    expect(await screen.findByText(/Dados da loja atualizados até 14\/03\/2026, 18:30/)).toBeInTheDocument();
+    expect(await screen.findByText('R$ 4.800,00')).toBeInTheDocument();
+  });
+
+  it('shows no sync notice when the last sync succeeded', async () => {
+    mockEndpoints();
+    mswServer.use(meHandler({
+      modules: [MODULES.overview!], sources: ['commerce'],
+      commerceSync: { lastSyncedAt: '2026-03-14T21:30:00.000Z', lastAttemptFailed: false },
+    }));
+    renderWithProviders(<OverviewPage today="2026-03-15" />, { route: '/' });
+    expect(await screen.findByText('R$ 4.800,00')).toBeInTheDocument();
+    expect(screen.queryByText(/Dados da loja atualizados/)).not.toBeInTheDocument();
+  });
+
   it('shows the error on every card when the batch fails', async () => {
     mswServer.use(
       http.post('/api/metrics/batch', () => HttpResponse.json({ message: 'fontes indisponíveis' }, { status: 502 })),

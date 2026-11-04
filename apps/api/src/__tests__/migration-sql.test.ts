@@ -20,3 +20,15 @@ describe('multitenant_foundation migration', () => {
     expect(sql).not.toContain('DROP TABLE');
   });
 });
+
+describe('user_password_changed_at migration', () => {
+  const additive = readFileSync(
+    join(__dirname, '../../prisma/migrations/20261116000000_user_password_changed_at/migration.sql'),
+    'utf8',
+  );
+
+  it('only adds the nullable passwordChangedAt column', () => {
+    expect(additive).toContain('ALTER TABLE "User" ADD COLUMN     "passwordChangedAt" TIMESTAMP(3);');
+    expect(additive).not.toMatch(/DROP|NOT NULL|UPDATE /);
+  });
+});

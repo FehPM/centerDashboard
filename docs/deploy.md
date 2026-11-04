@@ -51,10 +51,10 @@ down`, `ps` ou `logs` falham com "defina OPERATOR_JWT_SECRET" se ela não estive
 **Serviços e portas.** O compose sobe também o `backoffice` (nginx estático com o
 console da Blan, porta `8080`). A imagem dele é construída com a URL da API embutida:
 defina `BACKOFFICE_API_URL` (padrão `http://localhost:3333`) com a URL pública da API
-(ex.: `https://api.<domínio>`) e refaça o build quando ela mudar. A `api` recebe
-`OPERATOR_JWT_SECRET`, `PANEL_ORIGIN`, `BACKOFFICE_ORIGIN` e `MONDAY_API_TOKEN` do
-`.env`; as origens precisam bater com as URLs públicas do painel e do back-office
-(CORS).
+(ex.: `https://api.<domínio>`) e refaça o build quando ela mudar. A `api` e o `sync`
+recebem `OPERATOR_JWT_SECRET`, `PANEL_ORIGIN`, `BACKOFFICE_ORIGIN` e
+`MONDAY_API_TOKEN` do `.env` (o worker roda o mesmo `loadConfig`); as origens
+precisam bater com as URLs públicas do painel e do back-office (CORS).
 
 **Bind das portas.** `3333` (API) e `8080` (back-office) são publicadas só em
 `127.0.0.1` (`API_BIND`, `BACKOFFICE_BIND`). O proxy reverso no mesmo host as alcança
@@ -86,10 +86,25 @@ docker compose -f docker-compose.prod.yml logs -f sync
 `prisma migrate deploy` (rodado pelo serviço `api` acima) só cria o schema: num
 banco novo ele continua **vazio**.
 
-**1. Instalação existente (uma organização com Uappi embutida).** Depois que a
-migração `multitenant_foundation` for aplicada e **antes** de publicar a versão que
-contém a migração que apaga as colunas antigas (próxima seção), rode uma vez o
-script de dados, idempotente:
+### Instalação existente: duas versões, nesta ordem
+
+A produção atual está antes da migração `multitenant_foundation`, com a Uappi
+embutida em colunas de `Organization`. A passagem é feita em **duas versões
+separadas**, porque a segunda apaga colunas e não tem volta:
+
+| Versão | Contém | Efeito |
+|---|---|---|
+| **1 — fundação** | todo o código multi-tenant e as migrações aditivas (`multitenant_foundation`, `operator_totp_lockout`, `user_password_changed_at`); **sem** a pasta `20261115000000_drop_legacy_org_integration_columns` | cria as tabelas novas; as colunas antigas continuam no banco (o Prisma ignora colunas a mais) |
+| **2 — remoção** | só a pasta `20261115000000_drop_legacy_org_integration_columns` | apaga as colunas antigas de `Organization`; **irreversível** |
+
+⚠️ **A versão 2 só sai num release posterior, separado**, e só depois de:
+
+1. o `migrate-to-multitenant` ter rodado **na produção** (passo 1 abaixo), com a
+   `CREDENTIALS_ENCRYPTION_KEY` correta e os `warnings` lidos;
+2. a guarda da migração de remoção ter sido **testada numa cópia do banco de
+   produção** (roteiro em [Testar a remoção numa cópia da produção](#testar-a-remoção-numa-cópia-da-produção)).
+
+**1. Depois do deploy da versão 1**, rode uma vez o script de dados, idempotente:
 
 ```bash
 docker compose -f docker-compose.prod.yml exec api node dist/scripts/migrate-to-multitenant.js
@@ -99,12 +114,18 @@ Ele preenche o `slug` dos clientes, move as integrações (Uappi, GA4, Play, App
 Store, board do Monday) das colunas de `Organization` para a tabela `Integration`,
 cifrando as credenciais com a `CREDENTIALS_ENCRYPTION_KEY`, e ativa os 7 módulos
 para os clientes existentes. Imprime um relatório JSON com `warnings` (por exemplo,
-"defina `MONDAY_API_TOKEN`"): leia-os. Num banco novo não há o que migrar.
+"defina `MONDAY_API_TOKEN`"): leia-os. "Não pôde ser decifrado" significa chave
+diferente da que cifrou os dados: rode de novo com a chave certa (o script não
+mexe no que já copiou). Num banco novo não há o que migrar.
 
 **2. Primeiro operador da Blan**, uma única vez, contra o serviço `api` já em pé:
 
 ```bash
-docker compose -f docker-compose.prod.yml exec   -e OPERATOR_EMAIL="voce@suaempresa.com"   -e OPERATOR_NAME="Seu Nome"   -e OPERATOR_PASSWORD="escolha uma senha forte"   api node dist/scripts/create-operator.js
+docker compose -f docker-compose.prod.yml exec \
+  -e OPERATOR_EMAIL="voce@suaempresa.com" \
+  -e OPERATOR_NAME="Seu Nome" \
+  -e OPERATOR_PASSWORD="escolha uma senha forte" \
+  api node dist/scripts/create-operator.js
 ```
 
 O `db:seed` (que cria o operador `operator@center.local` e o Admin
@@ -114,36 +135,100 @@ produção**.
 **3. Back-office** (`admin.<domínio>`). O operador entra, cadastra o TOTP no primeiro
 login (QR code ou segredo no app autenticador), cria o cliente, ativa os módulos,
 configura as integrações e cria o Admin do cliente com senha provisória (a troca é
-exigida no primeiro acesso). Roteiro completo em
-[rodar-local.md](rodar-local.md#parte-2--back-office-primeiro-acesso). O antigo
+exigida no primeiro acesso). Roteiro completo no
+[README](../README.md#parte-2--back-office-e-roteiro-manual). O antigo
 `provision-admin` foi removido.
 
-## Remoção das colunas antigas
+**Notas da versão 1 para os clientes:**
+
+- **Todo usuário é deslogado uma vez** no deploy: os tokens anteriores não têm a
+  audiência `client` e passam a dar 401. Basta entrar de novo.
+- Trocar a senha encerra as outras sessões do usuário, e a nova senha precisa ser
+  diferente da atual. Uma redefinição pelo Admin ou pela Blan também encerra as
+  sessões abertas. `POST /auth/password` responde `200 { token }` (antes, `204`).
+- Uma falha passageira do sync (Uappi fora do ar) não tira mais os módulos de
+  commerce do ar: o painel mostra os dados com o aviso "dados da loja atualizados
+  até…". Só credencial recusada pela Uappi marca a integração com erro.
+
+## Remoção das colunas antigas (versão 2)
 
 A migração `20261115000000_drop_legacy_org_integration_columns` apaga de
 `Organization` as colunas de integração (Uappi, GA4, Play, App Store, Monday,
-`statusMapping`). **É irreversível** (é a única migração do projeto que remove colunas). Como o container `api` roda
-`prisma migrate deploy` ao subir, o `migrate-to-multitenant` precisa ter rodado
-com sucesso no ambiente ANTES de publicar a versão que contém esta migração.
+`statusMapping`). **É irreversível**: voltar exige restaurar o backup. Como o
+container `api` roda `prisma migrate deploy` ao subir, ela é aplicada no deploy da
+versão 2 — por isso essa versão só sai depois das duas condições acima.
 
-1. Faça backup do banco.
-2. `pnpm -w build`. O script lê as colunas legadas por `$queryRaw`, então a
-   versão do Prisma client não importa.
-3. `node apps/api/dist/scripts/migrate-to-multitenant.js` (com a
-   `CREDENTIALS_ENCRYPTION_KEY` correta do ambiente; confira os avisos).
-4. `pnpm --filter @center/api exec prisma migrate deploy`.
-5. `pnpm --filter @center/api exec prisma generate`.
-6. `pnpm -w build`.
-7. `node apps/api/dist/scripts/migrate-to-multitenant.js` de novo (deve rodar
-   sem planejar integrações).
+Ela tem uma guarda (bloco `DO $$` no início) que aborta, sem apagar nada, se:
 
-A migração tem duas proteções: recusa se algum cliente está sem `slug` ou se
-guarda um valor legado sem a `Integration` correspondente. Se disparar, ela fica
-registrada como falha e os deploys seguintes param com `P3009`. Corrija a causa
-(rode o script com a chave certa, ou anule a coluna legada que você abandona de
-propósito), rode
-`pnpm --filter @center/api exec prisma migrate resolve --rolled-back 20261115000000_drop_legacy_org_integration_columns`
-e faça o deploy de novo.
+- algum cliente está sem `slug` (`rode migrate-to-multitenant antes desta migração`);
+- algum valor legado não tem a `Integration` correspondente
+  (`há integração legada não copiada para "Integration"; rode migrate-to-multitenant
+  (com a chave correta) antes desta migração`) — é o que acontece quando o script
+  rodou com a chave errada.
+
+Se a guarda disparar, a migração fica registrada como falha (`P3018`) e os deploys
+seguintes param com `P3009`; o container `api` entra em loop de reinício e `exec`
+não funciona nele. Saída, com `run --rm` (um container avulso da mesma imagem):
+
+```bash
+docker compose -f docker-compose.prod.yml run --rm api \
+  node dist/scripts/migrate-to-multitenant.js
+docker compose -f docker-compose.prod.yml run --rm api \
+  npx prisma migrate resolve --rolled-back 20261115000000_drop_legacy_org_integration_columns
+docker compose -f docker-compose.prod.yml up -d
+```
+
+(Corrija a causa antes: a chave certa no `ENV_FILE`, ou anule de propósito a coluna
+legada que você abandona.)
+
+### Testar a remoção numa cópia da produção
+
+Obrigatório antes do release da versão 2. Nada aqui toca o banco de produção além
+do `pg_dump`.
+
+1. Dump da produção (já com a versão 1 e o `migrate-to-multitenant` aplicados):
+
+   ```bash
+   docker compose -f docker-compose.prod.yml exec postgres \
+     sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc -f /tmp/prod.dump'
+   docker compose -f docker-compose.prod.yml cp postgres:/tmp/prod.dump ./prod.dump
+   ```
+
+2. Restaurar num Postgres descartável, em outra porta:
+
+   ```bash
+   docker run -d --name center-prod-copy -e POSTGRES_USER=center -e POSTGRES_PASSWORD=center \
+     -e POSTGRES_DB=center_copy -p 55433:5432 postgres:16-alpine
+   docker cp ./prod.dump center-prod-copy:/tmp/prod.dump
+   docker exec center-prod-copy pg_restore -U center -d center_copy --no-owner /tmp/prod.dump
+   ```
+
+3. Num checkout da **versão 2**, aplicar as migrações na cópia:
+
+   ```bash
+   DATABASE_URL="postgresql://center:center@localhost:55433/center_copy?schema=public" \
+     pnpm --filter @center/api exec prisma migrate deploy
+   ```
+
+   Esperado: só `20261115000000_drop_legacy_org_integration_columns` aplicada, sem
+   erro. Se a guarda abortar, **não publique**: rode o script com a chave certa na
+   produção e repita a partir do passo 1.
+4. Conferir que as integrações estão lá e que as colunas sumiram:
+
+   ```bash
+   docker exec center-prod-copy psql -U center -d center_copy \
+     -c 'SELECT "organizationId", kind, provider, status FROM "Integration" ORDER BY 1, 2;' \
+     -c "SELECT column_name FROM information_schema.columns WHERE table_name = 'Organization';"
+   ```
+
+5. `docker rm -f center-prod-copy` e apague o `prod.dump` (tem dados de clientes).
+
+Em 2026-11-04 este roteiro foi exercitado num banco descartável com uma
+`Organization` legada preenchida: a guarda abortou sem `slug`, abortou com o script
+rodado com a chave errada, e passou depois do script com a chave certa, com as
+credenciais decifrando corretamente em `Integration`. A migração aditiva
+`20261116000000_user_password_changed_at`, aplicada na versão 1, não atrapalha: o
+Prisma aplica a de remoção depois dela sem reclamar da ordem.
 
 ## Acessando o dashboard
 
@@ -198,6 +283,8 @@ git checkout <tag-anterior>
 docker compose -f docker-compose.prod.yml up -d --build
 ```
 
-As migrações do Prisma são aditivas, com **uma exceção**: a que remove as colunas
-antigas de `Organization` (seção acima). Voltar o código para uma versão anterior a
-ela exige restaurar o backup do banco; para as demais, voltar o código basta.
+Duas migrações removem colunas: `20260915171555_sprint_cycle_and_numbering`
+(apaga `SprintTask.sprintLabel`) e `20261115000000_drop_legacy_org_integration_columns`
+(apaga as colunas antigas de integração de `Organization`). Voltar o código para
+antes de qualquer uma delas exige restaurar o backup do banco; nas demais, as
+migrações são aditivas e voltar o código basta.

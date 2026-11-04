@@ -7,6 +7,7 @@ import { PeriodPicker } from '../components/filters/PeriodPicker.js';
 import { SourceFilter } from '../components/filters/SourceFilter.js';
 import { KpiCard } from '../components/charts/KpiCard.js';
 import { TimeSeriesChart } from '../components/charts/TimeSeriesChart.js';
+import { CommerceSyncNotice } from '../components/layout/CommerceSyncNotice.js';
 import type { MetricQueryInput, MetricSeries, MetricSource, MetricUnit } from '../lib/api-client.js';
 import { formatMetricValue } from '../lib/format.js';
 
@@ -36,19 +37,25 @@ export function OverviewPage({ today }: { today: string }) {
   const { filters } = useFilters(today);
   const { data: me } = useMe();
   const allowedSources = me?.sources ?? [];
+  // Liberada e pronta. Uma fonte liberada mas pendente (ex.: Aquisição ativa
+  // antes de a Blan configurar o GA4) responderia 409 e derrubaria o lote
+  // inteiro — seus cards mostram "aguardando configuração" sem consultar.
+  const readySources = me?.readySources ?? [];
   const hasModule = (key: string) => me?.modules.some((m) => m.key === key && m.state === 'ready') ?? false;
   const showApp = hasModule('app_usage');
   const showQuality = hasModule('quality');
   const showSprint = hasModule('sprint');
-  const showCommerceStatus = filters.sources.includes('commerce') && allowedSources.includes('commerce');
+  const showCommerceStatus = filters.sources.includes('commerce') && readySources.includes('commerce');
 
-  // Só pedimos métricas de fontes liberadas ao cliente: o resto seria 403.
+  // Cards: fontes liberadas ao cliente (o resto seria 403). Consultas: só as
+  // fontes prontas (uma pendente seria 409 para o lote todo).
   const visibleMetrics = HEADLINE_METRICS.filter(
     (metric) => filters.sources.includes(metric.source) && allowedSources.includes(metric.source),
   );
+  const isReady = (source: MetricSource) => readySources.includes(source);
 
   const queries = useMemo<MetricQueryInput[]>(
-    () => visibleMetrics.map((metric) => ({
+    () => visibleMetrics.filter((metric) => isReady(metric.source)).map((metric) => ({
       metricId: metric.metricId, from: filters.from, to: filters.to, granularity: filters.granularity,
     })),
     // `visibleMetrics` deriva de `filters`; depender de `filters` basta e evita
@@ -84,6 +91,7 @@ export function OverviewPage({ today }: { today: string }) {
 
   return (
     <div className="space-y-6">
+      <CommerceSyncNotice />
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <PeriodPicker today={today} />
         <SourceFilter today={today} />
@@ -98,6 +106,7 @@ export function OverviewPage({ today }: { today: string }) {
             value={seriesById.get(metric.metricId)?.total ?? 0}
             isLoading={isLoading}
             error={queryError}
+            awaitingSetup={!isReady(metric.source)}
           />
         ))}
       </div>

@@ -105,35 +105,36 @@ export function createUappiConnector(opts: UappiConnectorOptions): CommerceConne
   };
 }
 
+/** Percorre a listagem e busca o detalhe de cada pedido. */
 async function* readPages(
   client: UappiClientLike,
   settings: UappiSettings,
   window: DateWindow,
   ctx: ReadContext,
 ): AsyncGenerator<CanonicalOrderRecord | ReadFailure> {
-      for await (const page of client.iterateOrders({ from: window.from, to: window.to })) {
-        for (const raw of page) {
-          const summary = UappiOrderSummarySchema.safeParse(raw);
-          if (!summary.success) {
-            ctx.logger('pedido da listagem sem numeroPedido, ignorado');
-            yield { kind: 'failure', reference: 'sem-numeroPedido', error: 'listagem sem numeroPedido' };
-            continue;
-          }
-
-          const numeroPedido = summary.data.numeroPedido;
-          try {
-            const detail = await client.getOrder(numeroPedido);
-            const parsed = UappiOrderSchema.parse(detail);
-            const { order, items } = mapOrder(parsed, {
-              pseudonymizer: ctx.pseudonymizer,
-              statusOverrides: settings.statusOverrides,
-            });
-            yield { kind: 'order', order, items };
-          } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            ctx.logger('falha ao ler pedido', { numeroPedido, error: message });
-            yield { kind: 'failure', reference: numeroPedido, error: message };
-          }
-        }
+  for await (const page of client.iterateOrders({ from: window.from, to: window.to })) {
+    for (const raw of page) {
+      const summary = UappiOrderSummarySchema.safeParse(raw);
+      if (!summary.success) {
+        ctx.logger('pedido da listagem sem numeroPedido, ignorado');
+        yield { kind: 'failure', reference: 'sem-numeroPedido', error: 'listagem sem numeroPedido' };
+        continue;
       }
+
+      const numeroPedido = summary.data.numeroPedido;
+      try {
+        const detail = await client.getOrder(numeroPedido);
+        const parsed = UappiOrderSchema.parse(detail);
+        const { order, items } = mapOrder(parsed, {
+          pseudonymizer: ctx.pseudonymizer,
+          statusOverrides: settings.statusOverrides,
+        });
+        yield { kind: 'order', order, items };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        ctx.logger('falha ao ler pedido', { numeroPedido, error: message });
+        yield { kind: 'failure', reference: numeroPedido, error: message };
+      }
+    }
+  }
 }

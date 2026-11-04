@@ -30,8 +30,7 @@ const mcpServers: McpServerConfig[] = [
     // Uappi) e por isso não está em ALLOWED_TOOLS/RANKINGS (ver routes/metrics.ts,
     // agent/tools.ts). A variável fica aqui pronta para quando a ferramenta
     // existir de fato.
-    env: { DATABASE_URL: config.databaseUrl, UAPPI_BASE_URL: config.uappiBaseUrl,
-      CREDENTIALS_ENCRYPTION_KEY: config.credentialsEncryptionKey },
+    env: { DATABASE_URL: config.databaseUrl, UAPPI_BASE_URL: config.uappiBaseUrl },
   },
   {
     source: 'ga4',

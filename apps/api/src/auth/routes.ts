@@ -1,10 +1,10 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { getModule, moduleReadiness } from '@center/entitlements';
+import { getModule, isSourceReady, moduleReadiness } from '@center/entitlements';
 import { getAccess } from '../authz/guards.js';
 import type { AppDeps } from '../deps.js';
 import { DUMMY_HASH, hashPassword, verifyPassword } from './password.js';
-import type { AuthPayload } from './jwt.js';
+import { issuedAtFor, type AuthPayload } from './jwt.js';
 
 const PasswordBodySchema = z.object({
   currentPassword: z.string().min(1),
@@ -44,6 +44,8 @@ export async function registerAuthRoutes(app: FastifyInstance, deps: AppDeps): P
 
       const payload: AuthPayload = {
         userId: user.id, organizationId: user.organizationId, role: user.role,
+        // `iat` nunca anterior à última troca de senha (ver issuedAtFor).
+        iat: issuedAtFor(user.passwordChangedAt),
       };
       return reply.send({
         // aud explícito: o @fastify/jwt não mescla o `sign` global quando há opções locais.
@@ -73,11 +75,30 @@ export async function registerAuthRoutes(app: FastifyInstance, deps: AppDeps): P
       if (!user || !(await verifyPassword(parsed.data.currentPassword, user.passwordHash))) {
         return reply.status(401).send({ error: 'unauthorized', message: 'senha atual incorreta' });
       }
+      // Vale também para a troca obrigatória: repetir a senha provisória
+      // deixaria quem a definiu (Admin ou Blan) sabendo a senha do usuário.
+      if (parsed.data.newPassword === parsed.data.currentPassword) {
+        return reply.status(400).send({
+          error: 'bad_request', message: 'a nova senha precisa ser diferente da senha atual',
+        });
+      }
+      // passwordChangedAt derruba todo token emitido antes (app.authenticate).
+      const passwordChangedAt = new Date();
       await deps.prisma.user.update({
         where: { id: request.auth.userId },
-        data: { passwordHash: await hashPassword(parsed.data.newPassword), mustChangePassword: false },
+        data: {
+          passwordHash: await hashPassword(parsed.data.newPassword),
+          mustChangePassword: false,
+          passwordChangedAt,
+        },
       });
-      return reply.status(204).send();
+      // Token novo na mesma resposta: quem acabou de trocar a senha continua
+      // logado nesta aba; as outras sessões caem no 401.
+      const payload: AuthPayload = {
+        userId: request.auth.userId, organizationId: request.auth.organizationId, role: request.auth.role,
+        iat: issuedAtFor(passwordChangedAt),
+      };
+      return reply.send({ token: app.jwt.sign(payload, { expiresIn: '12h', aud: 'client' }) });
     },
   );
 
@@ -97,6 +118,16 @@ export async function registerAuthRoutes(app: FastifyInstance, deps: AppDeps): P
       if (!organization || (!viewSession && !user)) {
         return reply.status(401).send({ error: 'unauthorized', message: 'token ausente ou inválido' });
       }
+      // Status do sync em leitura, para o aviso "dados atualizados até…" nos
+      // módulos de commerce. Nunca a mensagem de erro: só se a última
+      // tentativa falhou (o detalhe fica com a Blan, no back-office).
+      const commerceState = access.sources.has('commerce')
+        ? await deps.prisma.syncState.findUnique({
+            where: { organizationId_resource: { organizationId: auth.organizationId, resource: 'orders' } },
+            select: { lastSyncedAt: true, lastError: true },
+          })
+        : null;
+      const sources = [...access.sources];
       return {
         user: user
           ? { id: auth.userId, name: user.name, email: user.email, role: auth.role, mustChangePassword: auth.mustChangePassword }
@@ -106,7 +137,16 @@ export async function registerAuthRoutes(app: FastifyInstance, deps: AppDeps): P
           const { label, menuPath } = getModule(key);
           return { key, label, menuPath, state: moduleReadiness(key, access.integrations) };
         }),
-        sources: [...access.sources],
+        sources,
+        // Liberadas E prontas: só destas o painel pede dados. Uma fonte
+        // liberada e ainda pendente responderia 409 e derrubaria o lote todo.
+        readySources: sources.filter((source) => isSourceReady(source, access.integrations)),
+        commerceSync: commerceState
+          ? {
+              lastSyncedAt: commerceState.lastSyncedAt?.toISOString() ?? null,
+              lastAttemptFailed: commerceState.lastError !== null,
+            }
+          : null,
         viewSession,
       };
     },

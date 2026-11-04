@@ -94,7 +94,12 @@ export interface MeView {
   user: { id: string; name: string; email: string; role: 'ADMIN' | 'MEMBER'; mustChangePassword: boolean };
   organization: { id: string; name: string };
   modules: ModuleView[];
+  /** Fontes liberadas pelos módulos do usuário. */
   sources: MetricSource[];
+  /** Liberadas E com a integração pronta: só destas o painel pede dados. */
+  readySources: MetricSource[];
+  /** Sync da loja, só leitura; null quando o usuário não vê commerce. */
+  commerceSync: { lastSyncedAt: string | null; lastAttemptFailed: boolean } | null;
   viewSession: boolean;
 }
 
@@ -220,7 +225,8 @@ export const apiClient = {
     });
   },
   /** Senha atual errada volta 401: não pode derrubar a sessão. */
-  changePassword(currentPassword: string, newPassword: string): Promise<void> {
+  /** Devolve um token novo: a troca derruba todos os tokens anteriores. */
+  changePassword(currentPassword: string, newPassword: string): Promise<{ token: string }> {
     return request('/auth/password', {
       method: 'POST', body: JSON.stringify({ currentPassword, newPassword }), keepTokenOn401: true,
     });

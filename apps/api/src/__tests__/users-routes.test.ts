@@ -8,7 +8,7 @@ import { testConfig } from './helpers/config.js';
 
 interface FakeUser {
   id: string; email: string; name: string; role: 'ADMIN' | 'MEMBER'; organizationId: string;
-  passwordHash: string; active: boolean; mustChangePassword: boolean;
+  passwordHash: string; active: boolean; mustChangePassword: boolean; passwordChangedAt?: Date | null;
 }
 
 const long = (moduleKey: string) => ({
@@ -71,6 +71,7 @@ async function setup(role: 'ADMIN' | 'MEMBER' = 'ADMIN') {
       }),
     },
     integration: { findMany: jest.fn(async () => [{ kind: 'COMMERCE', status: 'OK', config: {} }]) },
+    syncState: { findUnique: jest.fn(async () => null) },
   };
   prisma.$transaction = jest.fn(async (fn: (tx: unknown) => unknown, _opts?: unknown) => fn(prisma));
   const app = await buildServer({
@@ -266,6 +267,26 @@ describe('users routes', () => {
     const user = ctx.users.find((u) => u.id === 'user_2')!;
     expect(user.mustChangePassword).toBe(true);
     expect(user.passwordHash).not.toContain('senha-provisoria-1');
+    expect(user.passwordChangedAt).toBeInstanceOf(Date);
+    await ctx.app.close();
+  });
+
+  it('reset-password by the Admin ends the user\'s open sessions (old token → 401)', async () => {
+    const ctx = await setup();
+    const login = await ctx.app.inject({
+      method: 'POST', url: '/auth/login', payload: { email: 'bia@example.com', password: 'segredo123' },
+    });
+    const biaHeaders = { authorization: `Bearer ${login.json().token as string}` };
+    expect((await ctx.app.inject({ method: 'GET', url: '/auth/me', headers: biaHeaders })).statusCode).toBe(200);
+
+    const reset = await ctx.app.inject({
+      method: 'POST', url: '/api/users/user_2/reset-password', headers: ctx.headers,
+      payload: { temporaryPassword: 'senha-provisoria-1' },
+    });
+    expect(reset.statusCode).toBe(204);
+    expect((await ctx.app.inject({ method: 'GET', url: '/auth/me', headers: biaHeaders })).statusCode).toBe(401);
+    // A sessão de quem redefiniu continua valendo.
+    expect((await ctx.app.inject({ method: 'GET', url: '/api/users', headers: ctx.headers })).statusCode).toBe(200);
     await ctx.app.close();
   });
 });

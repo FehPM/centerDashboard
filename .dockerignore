@@ -8,4 +8,10 @@ coverage
 .env.*
 !.env.example
 *.env
+# Também os .env aninhados (ex.: apps/api/.env): o COPY . . da imagem os
+# levaria para o runtime.
+**/.env
+**/.env.*
+!**/.env.example
+**/*.env
 *.log

@@ -188,9 +188,12 @@ export async function registerIntegrationRoutes(scope: FastifyInstance, deps: Ap
         return reply.status(400).send(badRequest(zodMessage(error)));
       }
       const result = await connector.check(settings);
+      // "Testar" não religa uma integração desativada (o sync voltaria a rodar
+      // sem uma ação registrada como tal): só grava o resultado do teste.
+      const status = row.status === 'DISABLED' ? 'DISABLED' : result.ok ? 'OK' : 'ERROR';
       const saved = await prisma.integration.update({
         where: { organizationId_kind: { organizationId, kind } },
-        data: { status: result.ok ? 'OK' : 'ERROR', lastCheckAt: new Date(), lastError: result.ok ? null : result.error },
+        data: { status, lastCheckAt: new Date(), lastError: result.ok ? null : result.error },
         select: SELECT,
       });
       await recordAudit(prisma, request, {

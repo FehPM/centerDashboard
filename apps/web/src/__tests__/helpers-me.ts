@@ -17,6 +17,9 @@ export function meHandler(overrides: Partial<MeView> & { role?: 'ADMIN' | 'MEMBE
     sources: ['commerce'],
     viewSession: false,
     ...rest,
+    // Sem override, toda fonte liberada está pronta (o caso comum nos testes).
+    readySources: rest.readySources ?? rest.sources ?? ['commerce'],
+    commerceSync: rest.commerceSync ?? null,
   };
   return http.get('/auth/me', () => HttpResponse.json(me));
 }

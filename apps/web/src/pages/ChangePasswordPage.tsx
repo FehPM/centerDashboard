@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { apiClient } from '../lib/api-client.js';
+import { apiClient, setAuthToken } from '../lib/api-client.js';
 import { useAuth } from '../hooks/use-auth.js';
 
 const inputClass = 'w-full rounded-md border px-3 py-2';
@@ -18,7 +18,9 @@ export function ChangePasswordPage() {
 
   const mutation = useMutation({
     mutationFn: () => apiClient.changePassword(current, next),
-    onSuccess: async () => {
+    onSuccess: async (result) => {
+      // O token antigo deixou de valer com a troca; o novo veio na resposta.
+      if (result?.token) setAuthToken(result.token);
       await queryClient.invalidateQueries({ queryKey: ['me'] });
       navigate('/', { replace: true });
     },
@@ -28,6 +30,7 @@ export function ChangePasswordPage() {
     event.preventDefault();
     if (next.length < 12) { setLocalError('A nova senha precisa ter no mínimo 12 caracteres.'); return; }
     if (next !== confirm) { setLocalError('A confirmação precisa ser igual à nova senha.'); return; }
+    if (next === current) { setLocalError('A nova senha precisa ser diferente da senha atual.'); return; }
     setLocalError(null);
     mutation.mutate();
   }
