@@ -3,6 +3,8 @@ import { useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ApiError, backofficeApi, type OrgStatus } from '../lib/api-client.js';
 import { ModulesTab } from '../components/ModulesTab.js';
+import { IntegrationsTab } from '../components/IntegrationsTab.js';
+import { UsersTab } from '../components/UsersTab.js';
 
 const TABS = ['Módulos', 'Integrações', 'Usuários'] as const;
 type Tab = (typeof TABS)[number];
@@ -28,6 +30,13 @@ export function OrganizationDetailPage() {
     onError: (e) => setActionError(e instanceof ApiError ? e.message : 'Não foi possível salvar'),
   });
 
+  const [viewUrl, setViewUrl] = useState<string | null>(null);
+  const view = useMutation({
+    mutationFn: () => backofficeApi.startViewSession(id),
+    onSuccess: (session) => { setViewUrl(session.url); window.open(session.url, '_blank', 'noopener'); },
+    onError: (e) => setActionError(e instanceof ApiError ? e.message : 'Não foi possível abrir o painel'),
+  });
+
   if (isLoading) return <p>Carregando...</p>;
   if (error || !data) {
     return <p role="alert" className="text-red-600">
@@ -40,8 +49,8 @@ export function OrganizationDetailPage() {
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-xl font-semibold">{data.name}</h1>
         <p className="text-sm">Status: {data.status === 'ACTIVE' ? 'Ativo' : 'Suspenso'}</p>
-        {/* Visualização como cliente chega na Task 20. */}
-        <button type="button" disabled title="Disponível em breve" className="rounded-md border px-3 py-1 text-sm">
+        <button type="button" disabled={view.isPending} className="rounded-md border px-3 py-1 text-sm"
+          onClick={() => { setActionError(null); setViewUrl(null); view.mutate(); }}>
           Visualizar painel
         </button>
       </div>
@@ -68,6 +77,12 @@ export function OrganizationDetailPage() {
           {data.status === 'ACTIVE' ? 'Suspender cliente' : 'Reativar cliente'}
         </button>
       </form>
+      {viewUrl && (
+        <p className="mb-4 text-sm">
+          Se a aba não abriu,{' '}
+          <a href={viewUrl} target="_blank" rel="noopener noreferrer" className="underline">clique aqui</a>.
+        </p>
+      )}
       {actionError && <p role="alert" className="mb-4 text-sm text-red-600">{actionError}</p>}
       <div role="tablist" className="mb-4 flex gap-2">
         {TABS.map((t) => (
@@ -80,7 +95,8 @@ export function OrganizationDetailPage() {
       </div>
       <div role="tabpanel">
         {tab === 'Módulos' && <ModulesTab organizationId={data.id} modules={data.modules} />}
-        {/* Integrações e Usuários: preenchidos na Task 20. */}
+        {tab === 'Integrações' && <IntegrationsTab organizationId={data.id} />}
+        {tab === 'Usuários' && <UsersTab organizationId={data.id} />}
       </div>
     </div>
   );

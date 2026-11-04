@@ -84,9 +84,13 @@ describe('OrganizationDetailPage', () => {
   beforeEach(() => localStorage.setItem('center.operator.token', 't'));
 
   it('shows tabs and switches between them', async () => {
-    mswServer.use(http.get('*/internal/organizations/org1', () => HttpResponse.json({
-      ...item(), usersCount: 2, attribution: { organizationId: 'org1', apiUrl: 'http://x' },
-    })));
+    mswServer.use(
+      http.get('*/internal/organizations/org1', () => HttpResponse.json({
+        ...item(), usersCount: 2, attribution: { organizationId: 'org1', apiUrl: 'http://x' },
+      })),
+      http.get('*/internal/organizations/org1/integrations', () => HttpResponse.json([])),
+      http.get('*/internal/organizations/org1/users', () => HttpResponse.json([])),
+    );
     renderWithProviders(
       <Routes><Route path="/clientes/:id" element={<OrganizationDetailPage />} /></Routes>,
       { route: '/clientes/org1' },
@@ -95,8 +99,9 @@ describe('OrganizationDetailPage', () => {
     expect(screen.getByRole('row', { name: /Visão geral/ })).toBeInTheDocument();
     await userEvent.click(screen.getByRole('tab', { name: 'Integrações' }));
     expect(screen.queryByRole('row', { name: /Visão geral/ })).not.toBeInTheDocument();
+    expect(await screen.findByRole('group', { name: /E-commerce/ })).toBeInTheDocument();
     await userEvent.click(screen.getByRole('tab', { name: 'Usuários' }));
-    expect(screen.getByRole('tabpanel')).toBeInTheDocument();
+    expect(await screen.findByText('Nenhum usuário')).toBeInTheDocument();
   });
 
   async function renderDetail() {

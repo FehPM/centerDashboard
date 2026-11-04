@@ -79,11 +79,61 @@ export interface ModuleUpdate {
   endsAt?: string | null;
 }
 
+export type IntegrationKind =
+  'COMMERCE' | 'WEB_ANALYTICS' | 'APP_ANALYTICS' | 'PLAY_STORE' | 'APP_STORE' | 'SPRINT_BOARD';
+
+export interface IntegrationView {
+  kind: IntegrationKind;
+  provider: string;
+  config: Record<string, unknown>;
+  status: 'PENDING' | 'OK' | 'ERROR' | 'DISABLED';
+  lastCheckAt: string | null;
+  lastError: string | null;
+  secretsConfigured: boolean;
+  secretsUpdatedAt: string | null;
+  lastSyncedAt?: string | null;
+  syncError?: string | null;
+  serviceAccountEmail?: string | null;
+}
+
+export interface IntegrationUpdate {
+  provider: string;
+  config: Record<string, unknown>;
+  secrets?: Record<string, string>;
+}
+
+export interface OrgUser {
+  id: string; name: string; email: string; role: 'ADMIN' | 'MEMBER'; active: boolean; mustChangePassword: boolean;
+}
+
+export interface AuditItem {
+  id: string;
+  operatorId: string | null;
+  action: string;
+  organizationId: string | null;
+  targetType: string | null;
+  targetId: string | null;
+  metadata: unknown;
+  createdAt: string;
+}
+
+export interface AuditQuery { organizationId?: string; action?: string; before?: string; limit?: number }
+
+export interface OperatorItem {
+  id: string; email: string; name: string; active: boolean; lastLoginAt: string | null; createdAt: string;
+}
+
+export interface ViewSession { token: string; url: string; expiresAt: string }
+
+/** Base absoluta da API (relativa/vazia resolve contra a origem do back-office). */
+export function absoluteApiUrl(): string {
+  return new URL(__API_URL__, window.location.origin).href.replace(/\/+$/, '');
+}
+
 function post<T>(path: string, body: unknown, keepTokenOn401 = false): Promise<T> {
   return request<T>(path, { method: 'POST', body: JSON.stringify(body), keepTokenOn401 });
 }
 
-// As Tasks 19-20 acrescentam métodos (clientes, auditoria, operadores).
 export const backofficeApi = {
   login: (email: string, password: string) =>
     post<LoginResult>('/internal/auth/login', { email, password }, true),
@@ -102,5 +152,37 @@ export const backofficeApi = {
       `/internal/organizations/${encodeURIComponent(id)}/modules/${encodeURIComponent(key)}`,
       { method: 'PUT', body: JSON.stringify(body) },
     ),
+  listIntegrations: (id: string) =>
+    request<IntegrationView[]>(`/internal/organizations/${encodeURIComponent(id)}/integrations`),
+  saveIntegration: (id: string, kind: IntegrationKind, body: IntegrationUpdate) =>
+    request<IntegrationView>(
+      `/internal/organizations/${encodeURIComponent(id)}/integrations/${kind}`,
+      { method: 'PUT', body: JSON.stringify(body) },
+    ),
+  checkIntegration: (id: string, kind: IntegrationKind) =>
+    post<IntegrationView>(`/internal/organizations/${encodeURIComponent(id)}/integrations/${kind}/check`, {}),
+  disableIntegration: (id: string, kind: IntegrationKind) =>
+    post<IntegrationView>(`/internal/organizations/${encodeURIComponent(id)}/integrations/${kind}/disable`, {}),
+  listUsers: (id: string) =>
+    request<OrgUser[]>(`/internal/organizations/${encodeURIComponent(id)}/users`),
+  createAdmin: (id: string, body: { name: string; email: string; temporaryPassword: string }) =>
+    post<OrgUser>(`/internal/organizations/${encodeURIComponent(id)}/users`, body),
+  deactivateUser: (userId: string) =>
+    post<{ id: string; active: false }>(`/internal/users/${encodeURIComponent(userId)}/deactivate`, {}),
+  resetUserPassword: (userId: string, temporaryPassword: string) =>
+    post<{ id: string; mustChangePassword: true }>(
+      `/internal/users/${encodeURIComponent(userId)}/reset-password`, { temporaryPassword }),
+  startViewSession: (id: string) =>
+    post<ViewSession>(`/internal/organizations/${encodeURIComponent(id)}/view-session`, {}),
+  listAudit: (query: AuditQuery) => {
+    const params = new URLSearchParams();
+    for (const [key, value] of Object.entries(query)) if (value !== undefined && value !== '') params.set(key, String(value));
+    return request<AuditItem[]>(`/internal/audit?${params.toString()}`);
+  },
+  listOperators: () => request<OperatorItem[]>('/internal/operators'),
+  createOperator: (body: { name: string; email: string; password: string }) =>
+    post<{ id: string; email: string; name: string; active: true }>('/internal/operators', body),
+  deactivateOperator: (id: string) =>
+    post<{ id: string; active: false }>(`/internal/operators/${encodeURIComponent(id)}/deactivate`, {}),
   me: () => request<{ operator: OperatorView }>('/internal/auth/me').then((r) => r.operator),
 };
