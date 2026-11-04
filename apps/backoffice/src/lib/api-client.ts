@@ -48,6 +48,37 @@ export async function request<T>(
   return (await response.json()) as T;
 }
 
+export type OrgStatus = 'ACTIVE' | 'SUSPENDED';
+
+export interface OrganizationModuleState {
+  key: string;
+  status: OrgStatus;
+  startsAt: string;
+  endsAt: string | null;
+  inForce: boolean;
+}
+
+export interface OrganizationItem {
+  id: string;
+  name: string;
+  slug: string | null;
+  status: OrgStatus;
+  createdAt: string;
+  modules: OrganizationModuleState[];
+  pendingSetup: string[];
+}
+
+export interface OrganizationDetail extends OrganizationItem {
+  usersCount: number;
+  attribution: { organizationId: string; apiUrl: string };
+}
+
+export interface ModuleUpdate {
+  status: OrgStatus;
+  startsAt?: string;
+  endsAt?: string | null;
+}
+
 function post<T>(path: string, body: unknown, keepTokenOn401 = false): Promise<T> {
   return request<T>(path, { method: 'POST', body: JSON.stringify(body), keepTokenOn401 });
 }
@@ -58,5 +89,18 @@ export const backofficeApi = {
     post<LoginResult>('/internal/auth/login', { email, password }, true),
   verifyTotp: (token: string, code: string) =>
     post<TotpResult>('/internal/auth/totp', { token, code }, true),
+  listOrganizations: () => request<OrganizationItem[]>('/internal/organizations'),
+  createOrganization: (body: { name: string; slug?: string }) =>
+    post<OrganizationItem>('/internal/organizations', body),
+  getOrganization: (id: string) =>
+    request<OrganizationDetail>(`/internal/organizations/${encodeURIComponent(id)}`),
+  updateOrganization: (id: string, body: { name?: string; status?: OrgStatus }) =>
+    request<OrganizationItem>(`/internal/organizations/${encodeURIComponent(id)}`,
+      { method: 'PATCH', body: JSON.stringify(body) }),
+  updateModule: (id: string, key: string, body: ModuleUpdate) =>
+    request<{ key: string; status: OrgStatus; startsAt: string; endsAt: string | null }>(
+      `/internal/organizations/${encodeURIComponent(id)}/modules/${encodeURIComponent(key)}`,
+      { method: 'PUT', body: JSON.stringify(body) },
+    ),
   me: () => request<{ operator: OperatorView }>('/internal/auth/me').then((r) => r.operator),
 };
