@@ -71,20 +71,40 @@ export interface AgentMessageView { role: 'user' | 'assistant'; content: string 
 export interface AgentConversationView { conversationId: string; messages: AgentMessageView[] }
 export interface AgentAskResult { conversationId: string; reply: string }
 
-export interface IntegrationsView {
-  uappi: { configured: boolean };
-  ga4: { propertyId: string | null; bigQueryDataset: string | null };
+export type IntegrationKind =
+  | 'COMMERCE' | 'WEB_ANALYTICS' | 'APP_ANALYTICS' | 'PLAY_STORE' | 'APP_STORE' | 'SPRINT_BOARD';
+export type IntegrationStatus = 'PENDING' | 'OK' | 'ERROR' | 'DISABLED';
+
+export interface IntegrationStatusItem {
+  kind: IntegrationKind;
+  provider: string;
+  status: IntegrationStatus;
+  lastSyncedAt: string | null;
 }
 
-export interface IntegrationsUpdate {
-  uappiApiKey?: string;
-  uappiSecretKey?: string;
-  ga4PropertyId?: string;
-  ga4BigQueryDataset?: string;
+export interface IntegrationsView {
+  integrations: IntegrationStatusItem[];
+}
+
+export interface ModuleView {
+  key: string; label: string; menuPath: string | null; state: 'ready' | 'awaiting_setup';
+}
+
+export interface MeView {
+  user: { id: string; name: string; email: string; role: 'ADMIN' | 'MEMBER'; mustChangePassword: boolean };
+  organization: { id: string; name: string };
+  modules: ModuleView[];
+  /** Fontes liberadas pelos módulos do usuário. */
+  sources: MetricSource[];
+  /** Liberadas E com a integração pronta: só destas o painel pede dados. */
+  readySources: MetricSource[];
+  /** Sync da loja, só leitura; null quando o usuário não vê commerce. */
+  commerceSync: { lastSyncedAt: string | null; lastAttemptFailed: boolean } | null;
+  viewSession: boolean;
 }
 
 export class ApiError extends Error {
-  constructor(public readonly status: number, message: string) {
+  constructor(public readonly status: number, message: string, public readonly code?: string) {
     super(message);
     this.name = 'ApiError';
   }
@@ -101,29 +121,47 @@ export function getAuthToken(): string | null {
   return localStorage.getItem(TOKEN_KEY);
 }
 
-async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+export interface UserView {
+  id: string; name: string; email: string; role: 'ADMIN' | 'MEMBER';
+  active: boolean; mustChangePassword: boolean; modules: string[];
+}
+export interface CreateUserInput {
+  name: string; email: string; role: 'ADMIN' | 'MEMBER'; temporaryPassword: string; modules: string[];
+}
+export interface UpdateUserInput {
+  name?: string; role?: 'ADMIN' | 'MEMBER'; active?: boolean; modules?: string[];
+}
+
+async function request<T>(
+  path: string, init: RequestInit & { keepTokenOn401?: boolean } = {},
+): Promise<T> {
+  const { keepTokenOn401, ...fetchInit } = init;
   const token = getAuthToken();
   const response = await fetch(path, {
-    ...init,
+    ...fetchInit,
     headers: {
       'content-type': 'application/json',
       ...(token ? { authorization: `Bearer ${token}` } : {}),
-      ...init.headers,
+      ...fetchInit.headers,
     },
   });
 
   if (!response.ok) {
     // Token expirado: limpamos aqui para que o guard redirecione sem cada tela
     // ter de tratar 401 individualmente.
-    if (response.status === 401) setAuthToken(null);
-    const body = (await response.json().catch(() => ({}))) as { message?: string };
-    throw new ApiError(response.status, body.message ?? `requisição falhou (${response.status})`);
+    if (response.status === 401 && !keepTokenOn401) setAuthToken(null);
+    const body = (await response.json().catch(() => ({}))) as { message?: string; error?: string };
+    throw new ApiError(response.status, body.message ?? `requisição falhou (${response.status})`, body.error);
   }
 
+  if (response.status === 204) return undefined as T;
   return (await response.json()) as T;
 }
 
 export const apiClient = {
+  getMe(): Promise<MeView> {
+    return request<MeView>('/auth/me');
+  },
   login(email: string, password: string) {
     return request<{ token: string; user: { id: string; name: string; email: string; role: string } }>(
       '/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) },
@@ -172,7 +210,25 @@ export const apiClient = {
     return request('/api/settings/integrations');
   },
 
-  updateIntegrations(patch: IntegrationsUpdate): Promise<IntegrationsView> {
-    return request('/api/settings/integrations', { method: 'PUT', body: JSON.stringify(patch) });
+  listUsers(): Promise<UserView[]> {
+    return request('/api/users');
+  },
+  createUser(input: CreateUserInput): Promise<UserView> {
+    return request('/api/users', { method: 'POST', body: JSON.stringify(input) });
+  },
+  updateUser(id: string, input: UpdateUserInput): Promise<UserView> {
+    return request(`/api/users/${id}`, { method: 'PATCH', body: JSON.stringify(input) });
+  },
+  resetUserPassword(id: string, temporaryPassword: string): Promise<void> {
+    return request(`/api/users/${id}/reset-password`, {
+      method: 'POST', body: JSON.stringify({ temporaryPassword }),
+    });
+  },
+  /** Senha atual errada volta 401: não pode derrubar a sessão. */
+  /** Devolve um token novo: a troca derruba todos os tokens anteriores. */
+  changePassword(currentPassword: string, newPassword: string): Promise<{ token: string }> {
+    return request('/auth/password', {
+      method: 'POST', body: JSON.stringify({ currentPassword, newPassword }), keepTokenOn401: true,
+    });
   },
 };

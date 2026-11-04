@@ -1,6 +1,7 @@
 import { useFilters, resolvePreset } from '../hooks/use-filters.js';
 import { useTool } from '../hooks/use-tool.js';
 import { PeriodPicker } from '../components/filters/PeriodPicker.js';
+import { CommerceSyncNotice } from '../components/layout/CommerceSyncNotice.js';
 import { RankingTable } from '../components/charts/RankingTable.js';
 import { formatMetricValue } from '../lib/format.js';
 import type { RankingResult } from '../lib/api-client.js';
@@ -47,6 +48,7 @@ export function ProductsPage({ today }: { today: string }) {
 
   return (
     <div className="space-y-6">
+      <CommerceSyncNotice />
       <PeriodPicker today={today} />
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">

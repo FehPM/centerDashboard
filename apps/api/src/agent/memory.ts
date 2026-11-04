@@ -1,5 +1,5 @@
 import type { PrismaClient } from '@prisma/client';
-import type { AgentMessage } from './agent.js';
+import type { AgentMessage, AgentUsage } from './agent.js';
 import type { AgentToolCall } from './tools.js';
 
 /** Teto do que sai do banco. A janela enviada ao modelo é menor. */
@@ -87,6 +87,7 @@ export interface AppendExchangeParams {
   userMessage: string;
   assistantMessage: string;
   toolCalls: AgentToolCall[];
+  usage?: AgentUsage;
 }
 
 export async function appendExchange(prisma: PrismaClient, params: AppendExchangeParams): Promise<void> {
@@ -95,7 +96,12 @@ export async function appendExchange(prisma: PrismaClient, params: AppendExchang
   });
 
   const assistantMessage = await prisma.message.create({
-    data: { conversationId: params.conversationId, role: 'ASSISTANT', content: params.assistantMessage },
+    data: {
+      conversationId: params.conversationId, role: 'ASSISTANT', content: params.assistantMessage,
+      ...(params.usage
+        ? { model: params.usage.model, inputTokens: params.usage.inputTokens, outputTokens: params.usage.outputTokens }
+        : {}),
+    },
   });
 
   if (params.toolCalls.length > 0) {

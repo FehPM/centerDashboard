@@ -6,14 +6,16 @@ import jwt from '@fastify/jwt';
 import rateLimit from '@fastify/rate-limit';
 import fastifyStatic from '@fastify/static';
 import type { AppDeps } from './deps.js';
+import { makeAuthenticate } from './authz/principal.js';
 import { registerAuthRoutes } from './auth/routes.js';
 import { registerMetricRoutes } from './routes/metrics.js';
 import { registerAnalysisRoutes } from './routes/analysis.js';
 import { registerAttributionRoutes } from './routes/attribution.js';
 import { registerSettingsRoutes } from './routes/settings.js';
+import { registerUserRoutes } from './routes/users.js';
 import { registerAgentRoutes } from './routes/agent.js';
+import { registerInternal } from './internal/plugin.js';
 import { registerWhatsAppRoutes } from './whatsapp/routes.js';
-import { registerLinkRoutes } from './whatsapp/link-routes.js';
 
 // No runtime empacotado, este arquivo compila para apps/api/dist/server.js;
 // dois níveis acima (apps/api/dist -> apps/api -> apps/) e então para
@@ -38,7 +40,7 @@ const DEFAULT_WEB_ROOT = join(dirname(fileURLToPath(import.meta.url)), '../../we
 // react-router (ver apps/web/src/App.tsx: '/', '/login', '/produtos',
 // '/aquisicao', '/configuracoes') começa com um destes prefixos, então este
 // matching mais amplo não engole rota nenhuma do dashboard.
-const RESERVED_PREFIXES = ['/api', '/auth', '/public', '/webhooks'];
+const RESERVED_PREFIXES = ['/api', '/auth', '/public', '/webhooks', '/internal'];
 const RESERVED_EXACT = new Set(['/health']);
 
 function isReservedPath(pathname: string): boolean {
@@ -47,12 +49,13 @@ function isReservedPath(pathname: string): boolean {
 }
 
 export async function buildServer(deps: AppDeps, opts: { webRoot?: string } = {}): Promise<FastifyInstance> {
-  // `trustProxy` faz `request.ip` refletir `x-forwarded-for` em vez do
-  // socket cru. Sem isso, atrás de qualquer load balancer/ingress em
+  // `trustProxy` (número de saltos, `TRUST_PROXY_HOPS`) faz `request.ip` refletir o
+  // `x-forwarded-for` adicionado pelo proxy confiável em vez do socket cru. Com `true`
+  // qualquer cliente forjaria o IP; com 0 saltos o cabeçalho é ignorado. Sem isso, atrás de qualquer load balancer/ingress em
   // produção, o rate limit do login (chave = request.ip) colapsa TODOS os
   // clientes num único balde — um atacante zera as tentativas de qualquer
   // usuário legítimo.
-  const app = Fastify({ logger: { level: process.env.LOG_LEVEL ?? 'info' }, trustProxy: true });
+  const app = Fastify({ logger: { level: process.env.LOG_LEVEL ?? 'info' }, trustProxy: deps.config.trustProxyHops > 0 ? deps.config.trustProxyHops : false });
 
   // O corpo cru é necessário para validar a assinatura do webhook do WhatsApp
   // (T32). Guardamos aqui, no único ponto onde o buffer ainda existe.
@@ -66,8 +69,26 @@ export async function buildServer(deps: AppDeps, opts: { webRoot?: string } = {}
     }
   });
 
-  await app.register(cors, { origin: true, credentials: true });
-  await app.register(jwt, { secret: deps.config.jwtSecret });
+  // CORS por área (design multi-tenant): o script de atribuição roda no site da
+  // loja (qualquer origem); /internal é só do back-office; o resto, só do painel.
+  await app.register(cors, {
+    delegator: (request, callback) => {
+      const pathname = (request.url.split('?')[0] ?? request.url).toLowerCase();
+      if (pathname.startsWith('/public')) return callback(null, { origin: true, credentials: true });
+      if (pathname.startsWith('/internal')) {
+        return callback(null, { origin: [deps.config.backofficeOrigin], credentials: true });
+      }
+      return callback(null, { origin: [deps.config.panelOrigin], credentials: true });
+    },
+  });
+  // `aud` separa os tokens do cliente dos do operador (backoffice).
+  await app.register(jwt, {
+    secret: deps.config.jwtSecret,
+    sign: { aud: 'client' },
+    // fast-jwt ignora allowedAud quando o claim falta; requiredClaims exige a presença.
+    verify: { allowedAud: 'client', requiredClaims: ['aud'] },
+  });
+  app.decorate('authenticate', makeAuthenticate(deps.prisma));
   await app.register(rateLimit, {
     global: true, max: 300, timeWindow: '1 minute',
     // O webhook do WhatsApp tem a assinatura HMAC como sua ÚNICA fronteira de
@@ -80,6 +101,17 @@ export async function buildServer(deps: AppDeps, opts: { webRoot?: string } = {}
     allowList: (request) => request.url === '/health' || request.url.startsWith('/webhooks/whatsapp'),
   });
 
+  // Antes de registrar rotas: o Fastify fixa o handler de erro no momento em que a rota é criada.
+  app.setErrorHandler((error: FastifyError, request, reply) => {
+    const statusCode = error.statusCode ?? 500;
+    if (statusCode >= 500) request.log.error({ err: error }, 'erro não tratado');
+    return reply.status(statusCode).send({
+      error: statusCode >= 500 ? 'internal_error' : 'bad_request',
+      // Nunca vaza mensagem de erro interno para o cliente.
+      message: statusCode >= 500 ? 'erro interno' : error.message,
+    });
+  });
+
   app.get('/health', async () => ({ status: 'ok' }));
 
   await registerAuthRoutes(app, deps);
@@ -87,13 +119,16 @@ export async function buildServer(deps: AppDeps, opts: { webRoot?: string } = {}
   await registerAnalysisRoutes(app, deps);
   await registerAttributionRoutes(app, deps);
   await registerSettingsRoutes(app, deps);
+  await registerUserRoutes(app, deps);
   await registerAgentRoutes(app, deps);
+  await registerInternal(app, deps);
   // Desativado a pedido do usuário (2026-09-30): o webhook público
   // `/webhooks/whatsapp` exige que a Meta alcance este servidor pela
   // internet — enquanto não há decisão de expor isso, a integração fica
-  // fora do ar. Reative descomentando esta linha quando for usar o bot.
+  // fora do ar. WhatsApp está fora do MVP multi-tenant (ver
+  // docs/superpowers/specs/2026-10-29-multi-tenant-modular-design.md);
+  // as rotas de vínculo (link-code) também deixaram de ser registradas.
   // await registerWhatsAppRoutes(app, deps);
-  await registerLinkRoutes(app, deps);
 
   // Serve o dashboard React (apps/web/dist) na mesma origem que a API — é o
   // que `apps/web/src/lib/api-client.ts` já assume (paths relativos, sem
@@ -124,16 +159,6 @@ export async function buildServer(deps: AppDeps, opts: { webRoot?: string } = {}
       return reply.sendFile('index.html');
     }
     return reply.status(404).send({ error: 'not_found', message: 'rota não encontrada' });
-  });
-
-  app.setErrorHandler((error: FastifyError, request, reply) => {
-    const statusCode = error.statusCode ?? 500;
-    if (statusCode >= 500) request.log.error({ err: error }, 'erro não tratado');
-    return reply.status(statusCode).send({
-      error: statusCode >= 500 ? 'internal_error' : 'bad_request',
-      // Nunca vaza mensagem de erro interno para o cliente.
-      message: statusCode >= 500 ? 'erro interno' : error.message,
-    });
   });
 
   return app;

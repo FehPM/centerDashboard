@@ -11,6 +11,11 @@ import { CloudApiClient } from './cloud-api-client.js';
 import { createWhatsAppWorker } from './worker.js';
 
 const config = loadConfig(process.env);
+if (config.whatsapp === null) {
+  console.log('WhatsApp desativado: variáveis WHATSAPP_* ausentes');
+  process.exit(0);
+}
+const whatsappConfig = config.whatsapp;
 const prisma = new PrismaClient();
 // BullMQ exige maxRetriesPerRequest: null na conexão do worker.
 const redis = new Redis(config.redisUrl, { maxRetriesPerRequest: null });
@@ -23,8 +28,7 @@ const mcpServers: McpServerConfig[] = [
     // Uappi) e por isso não está em ALLOWED_TOOLS/RANKINGS (ver routes/metrics.ts,
     // agent/tools.ts). A variável fica aqui pronta para quando a ferramenta
     // existir de fato.
-    env: { DATABASE_URL: config.databaseUrl, UAPPI_BASE_URL: config.uappiBaseUrl,
-      CREDENTIALS_ENCRYPTION_KEY: config.credentialsEncryptionKey } },
+    env: { DATABASE_URL: config.databaseUrl, UAPPI_BASE_URL: config.uappiBaseUrl } },
   { source: 'ga4', command: process.execPath, args: ['../../packages/mcp-ga4/dist/main.js'],
     env: { GA4_CREDENTIALS_JSON: config.ga4CredentialsJson, MOCK_EXTERNAL_APIS: String(config.mockExternalApis) } },
   { source: 'behavior', command: process.execPath, args: ['../../packages/mcp-behavior/dist/main.js'],
@@ -33,7 +37,7 @@ const mcpServers: McpServerConfig[] = [
 
 const pool = await McpPool.spawn(mcpServers);
 const gateway = new MetricGateway(pool, new RedisCacheStore(redis));
-const cloudApi = new CloudApiClient(config.whatsapp);
+const cloudApi = new CloudApiClient(whatsappConfig);
 
 const worker = createWhatsAppWorker({ prisma, gateway, cloudApi, config }, redis);
 

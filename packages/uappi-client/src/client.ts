@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { RateLimiter } from './rate-limiter.js';
 import type { UappiTokenProvider } from './auth.js';
 import type { UappiClientLike } from './interface.js';
+import { UappiApiError } from './errors.js';
 
 const APP_TOKEN = 'wapstore';
 /** Documentado como máximo por página. */
@@ -10,12 +11,7 @@ export const MAX_PAGE_SIZE = 100;
 export const LIST_ORDERS_PER_MINUTE = 120;
 export const ORDER_DETAIL_PER_MINUTE = 60;
 
-export class UappiApiError extends Error {
-  constructor(public readonly status: number, message: string) {
-    super(message);
-    this.name = 'UappiApiError';
-  }
-}
+export { UappiApiError };
 
 const ListOrdersPageSchema = z.object({
   pedidos: z.array(z.unknown()).default([]),

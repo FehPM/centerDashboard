@@ -42,7 +42,7 @@ async function setup(alreadyProcessed = false, enqueueImpl?: jest.Mock) {
     gateway: {} as unknown as MetricGateway,
     pseudonymizer: new Pseudonymizer(testConfig.piiPepper),
     secretBox: new SecretBox(testConfig.credentialsEncryptionKey),
-    queue: { enqueue },
+    connectors: {} as never, queue: { enqueue },
   });
   return { app, enqueue, prisma, processed };
 }

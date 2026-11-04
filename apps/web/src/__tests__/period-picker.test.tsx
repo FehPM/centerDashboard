@@ -1,5 +1,8 @@
 import { screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { mswServer } from '../test/msw-server.js';
+import { setAuthToken } from '../lib/api-client.js';
+import { meHandler } from './helpers-me.js';
 import { renderWithProviders } from '../test/render.js';
 import { PeriodPicker } from '../components/filters/PeriodPicker.js';
 import { SourceFilter } from '../components/filters/SourceFilter.js';
@@ -27,22 +30,28 @@ describe('PeriodPicker', () => {
 });
 
 describe('SourceFilter', () => {
-  it('renders one checkbox per source, checked by default', () => {
+  beforeEach(() => {
+    setAuthToken('t');
+    mswServer.use(meHandler({ sources: ['commerce', 'ga4'] }));
+  });
+  afterEach(() => setAuthToken(null));
+
+  it('renders one checkbox per source, checked by default', async () => {
     renderWithProviders(<SourceFilter today="2026-03-15" />, { route: '/' });
-    expect(screen.getByRole('checkbox', { name: 'Loja (Uappi)' })).toBeChecked();
+    expect(await screen.findByRole('checkbox', { name: 'Loja (Uappi)' })).toBeChecked();
     expect(screen.getByRole('checkbox', { name: 'Analytics' })).toBeChecked();
   });
 
   it('unchecking a source removes it from the filters', async () => {
     renderWithProviders(<SourceFilter today="2026-03-15" />, { route: '/' });
-    await userEvent.click(screen.getByRole('checkbox', { name: 'Analytics' }));
+    await userEvent.click(await screen.findByRole('checkbox', { name: 'Analytics' }));
     expect(screen.getByRole('checkbox', { name: 'Analytics' })).not.toBeChecked();
     expect(screen.getByRole('checkbox', { name: 'Loja (Uappi)' })).toBeChecked();
   });
 
   it('refuses to uncheck the last remaining source', async () => {
     renderWithProviders(<SourceFilter today="2026-03-15" />, { route: '/?sources=commerce' });
-    await userEvent.click(screen.getByRole('checkbox', { name: 'Loja (Uappi)' }));
+    await userEvent.click(await screen.findByRole('checkbox', { name: 'Loja (Uappi)' }));
     expect(screen.getByRole('checkbox', { name: 'Loja (Uappi)' })).toBeChecked();
   });
 });

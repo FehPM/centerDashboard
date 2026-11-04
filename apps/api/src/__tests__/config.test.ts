@@ -8,6 +8,7 @@ const validEnv = {
   CREDENTIALS_ENCRYPTION_KEY: 'a'.repeat(64),
   ANTHROPIC_API_KEY: 'sk-ant-test',
   UAPPI_BASE_URL: 'https://api.uappi.com.br',
+  OPERATOR_JWT_SECRET: 'o'.repeat(32),
   WHATSAPP_APP_SECRET: 'secret',
   WHATSAPP_VERIFY_TOKEN: 'verify',
   WHATSAPP_ACCESS_TOKEN: 'access',
@@ -58,5 +59,40 @@ describe('loadConfig', () => {
     expect(loadConfig({ ...validEnv, MOCK_EXTERNAL_APIS: 'true' }).mockExternalApis).toBe(true);
     expect(loadConfig({ ...validEnv, MOCK_EXTERNAL_APIS: 'false' }).mockExternalApis).toBe(false);
     expect(loadConfig({ ...validEnv, MOCK_EXTERNAL_APIS: 'yes' }).mockExternalApis).toBe(false);
+  });
+
+  it('loads without WHATSAPP_* and sets whatsapp to null', () => {
+    const { WHATSAPP_APP_SECRET: _a, WHATSAPP_VERIFY_TOKEN: _b, WHATSAPP_ACCESS_TOKEN: _c,
+      WHATSAPP_PHONE_NUMBER_ID: _d, ...withoutWhatsapp } = validEnv;
+    expect(loadConfig(withoutWhatsapp).whatsapp).toBeNull();
+    expect(loadConfig({ ...validEnv, WHATSAPP_ACCESS_TOKEN: '' }).whatsapp).toBeNull();
+    expect(loadConfig(validEnv).whatsapp).not.toBeNull();
+  });
+
+  it('rejects OPERATOR_JWT_SECRET equal to JWT_SECRET', () => {
+    expect(() => loadConfig({ ...validEnv, OPERATOR_JWT_SECRET: validEnv.JWT_SECRET }))
+      .toThrow(/OPERATOR_JWT_SECRET/);
+  });
+
+  it('rejects a short or missing OPERATOR_JWT_SECRET', () => {
+    expect(() => loadConfig({ ...validEnv, OPERATOR_JWT_SECRET: 'curto' })).toThrow(/OPERATOR_JWT_SECRET/);
+    const { OPERATOR_JWT_SECRET: _omitted, ...incomplete } = validEnv;
+    expect(() => loadConfig(incomplete)).toThrow(/OPERATOR_JWT_SECRET/);
+  });
+
+  it('applies defaults for origins and the Monday token', () => {
+    const config = loadConfig(validEnv);
+    expect(config.panelOrigin).toBe('http://localhost:5173');
+    expect(config.backofficeOrigin).toBe('http://localhost:5174');
+    expect(config.mondayApiToken).toBe('');
+  });
+
+  it('TRUST_PROXY_HOPS defaults to 0', () => {
+    expect(loadConfig(validEnv).trustProxyHops).toBe(0);
+    expect(loadConfig({ ...validEnv, TRUST_PROXY_HOPS: '1' }).trustProxyHops).toBe(1);
+  });
+
+  it('rejects a negative TRUST_PROXY_HOPS', () => {
+    expect(() => loadConfig({ ...validEnv, TRUST_PROXY_HOPS: '-1' })).toThrow(/TRUST_PROXY_HOPS/);
   });
 });

@@ -10,7 +10,7 @@ export async function resetQualityData(): Promise<void> {
   await prisma.organization.upsert({
     where: { id: TEST_ORG },
     update: {},
-    create: { id: TEST_ORG, name: 'Org de Teste (Qualidade)' },
+    create: { id: TEST_ORG, name: 'Org de Teste (Qualidade)', slug: 'teste-quality' },
   });
 }
 

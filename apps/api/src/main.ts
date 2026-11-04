@@ -9,6 +9,7 @@ import { McpPool, MetricGateway, RedisCacheStore, type McpServerConfig } from '@
 import { Pseudonymizer } from '@center/pii';
 import { SecretBox } from '@center/secrets';
 import { loadConfig } from './config.js';
+import { createConnectorRegistry } from '@center/connectors';
 import { buildServer } from './server.js';
 import { BullMessageQueue } from './whatsapp/queue.js';
 
@@ -29,8 +30,7 @@ const mcpServers: McpServerConfig[] = [
     // Uappi) e por isso não está em ALLOWED_TOOLS/RANKINGS (ver routes/metrics.ts,
     // agent/tools.ts). A variável fica aqui pronta para quando a ferramenta
     // existir de fato.
-    env: { DATABASE_URL: config.databaseUrl, UAPPI_BASE_URL: config.uappiBaseUrl,
-      CREDENTIALS_ENCRYPTION_KEY: config.credentialsEncryptionKey },
+    env: { DATABASE_URL: config.databaseUrl, UAPPI_BASE_URL: config.uappiBaseUrl },
   },
   {
     source: 'ga4',
@@ -48,7 +48,7 @@ const mcpServers: McpServerConfig[] = [
     source: 'firebase',
     command: process.execPath,
     args: ['../../packages/mcp-firebase/dist/main.js'],
-    env: { GA4_APP_CREDENTIALS_JSON: config.ga4AppCredentialsJson, MOCK_EXTERNAL_APIS: String(config.mockExternalApis) },
+    env: { GA4_CREDENTIALS_JSON: config.ga4CredentialsJson, GA4_APP_CREDENTIALS_JSON: config.ga4AppCredentialsJson, MOCK_EXTERNAL_APIS: String(config.mockExternalApis) },
   },
   {
     source: 'quality',
@@ -67,7 +67,7 @@ const mcpServers: McpServerConfig[] = [
 const pool = await McpPool.spawn(mcpServers);
 const gateway = new MetricGateway(pool, new RedisCacheStore(redis));
 const queue = new BullMessageQueue(redis);
-// Decifra uappiApiKey/uappiSecretKey (T24B) — nunca lidos em claro do Postgres.
+// Decifra Integration.secrets — nunca lidos em claro do Postgres.
 const secretBox = new SecretBox(config.credentialsEncryptionKey);
 
 const app = await buildServer({
@@ -75,6 +75,7 @@ const app = await buildServer({
   pseudonymizer: new Pseudonymizer(config.piiPepper),
   secretBox,
   queue,
+  connectors: createConnectorRegistry({ uappiBaseUrl: config.uappiBaseUrl, mock: config.mockExternalApis }),
 });
 
 async function shutdown(signal: string): Promise<void> {

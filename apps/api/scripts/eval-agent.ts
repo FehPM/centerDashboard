@@ -7,6 +7,7 @@ import { Redis } from 'ioredis';
 import { McpPool, MetricGateway, RedisCacheStore } from '@center/mcp-core';
 import { loadConfig } from '../src/config.js';
 import { runAgent } from '../src/agent/agent.js';
+import { fullAccess } from '../src/agent/full-access.js';
 import { resolveTenant } from '../src/tenant.js';
 
 /**
@@ -52,8 +53,7 @@ const pool = await McpPool.spawn([
     // Uappi) e por isso não está em ALLOWED_TOOLS/RANKINGS (ver routes/metrics.ts,
     // agent/tools.ts). A variável fica aqui pronta para quando a ferramenta
     // existir de fato.
-    env: { DATABASE_URL: config.databaseUrl, UAPPI_BASE_URL: config.uappiBaseUrl,
-      CREDENTIALS_ENCRYPTION_KEY: config.credentialsEncryptionKey } },
+    env: { DATABASE_URL: config.databaseUrl, UAPPI_BASE_URL: config.uappiBaseUrl } },
   { source: 'ga4', command: process.execPath, args: ['../../packages/mcp-ga4/dist/main.js'],
     env: { GA4_CREDENTIALS_JSON: config.ga4CredentialsJson, MOCK_EXTERNAL_APIS: String(config.mockExternalApis) } },
 ]);
@@ -68,7 +68,7 @@ let fallbacks = 0;
 
 for (const { q, expect } of QUESTIONS) {
   const started = Date.now();
-  const result = await runAgent({ gateway, tenant, today, history: [], userMessage: q });
+  const result = await runAgent({ gateway, tenant, today, history: [], userMessage: q, access: fullAccess() });
   const elapsed = Date.now() - started;
   latencies.push(elapsed);
 

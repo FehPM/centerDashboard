@@ -7,11 +7,11 @@ import { testConfig as config } from './helpers/config.js';
 const pseudonymizer = new Pseudonymizer(config.piiPepper);
 const secretBox = new SecretBox(config.credentialsEncryptionKey);
 
-function setup(organizationExists = true) {
+function setup(organizationExists = true, status = 'ACTIVE') {
   const create = jest.fn(async () => ({ id: 'touch_1' }));
   const prisma = {
     organization: {
-      findUnique: jest.fn(async () => (organizationExists ? { id: 'org_1' } : null)),
+      findUnique: jest.fn(async () => (organizationExists ? { id: 'org_1', status } : null)),
     },
     attributionTouch: { create },
   } as unknown as PrismaClient;
@@ -33,7 +33,7 @@ async function build(prisma: PrismaClient) {
   return buildServer({
     config, prisma, pseudonymizer, secretBox,
     gateway: {} as never,
-    queue: { enqueue: jest.fn(async () => {}) },
+    queue: { enqueue: jest.fn(async () => {}) }, connectors: {} as never,
   });
 }
 
@@ -115,6 +115,29 @@ describe('POST /public/attribution', () => {
     const app = await build(prisma);
     const response = await app.inject({ method: 'POST', url: '/public/attribution', payload: validBody });
     expect(response.body).toBe('');
+    await app.close();
+  });
+
+  it('suspended organization gets the unknown-organization 404', async () => {
+    const unknown = setup(false);
+    const suspended = setup(true, 'SUSPENDED');
+    const appA = await build(unknown.prisma);
+    const appB = await build(suspended.prisma);
+    const a = await appA.inject({ method: 'POST', url: '/public/attribution', payload: validBody });
+    const b = await appB.inject({ method: 'POST', url: '/public/attribution', payload: validBody });
+    expect(b.statusCode).toBe(404);
+    expect(b.json()).toEqual(a.json());
+    expect(b.json()).toEqual({ error: 'not_found', message: 'organização desconhecida' });
+    expect(suspended.create).not.toHaveBeenCalled();
+    await appA.close();
+    await appB.close();
+  });
+
+  it('POST /api/whatsapp/link-code returns 404', async () => {
+    const { prisma } = setup();
+    const app = await build(prisma);
+    const response = await app.inject({ method: 'POST', url: '/api/whatsapp/link-code' });
+    expect(response.statusCode).toBe(404);
     await app.close();
   });
 });

@@ -1,6 +1,7 @@
 import { MockLanguageModelV2 } from 'ai/test';
 import type { MetricGateway } from '@center/mcp-core';
 import type { MetricSeries, TenantContext } from '@center/shared';
+import { fullAccess } from '../agent/full-access.js';
 import { MAX_REPLY_CHARS, buildSystemPrompt, defaultModel, runAgent } from '../agent/agent.js';
 
 const tenant: TenantContext = { organizationId: 'org_1', externalIds: {} };
@@ -55,36 +56,121 @@ function toolThenTextModel(toolName: string, input: unknown, finalText: string) 
 
 const baseInput = {
   tenant, today: '2026-03-15', history: [], userMessage: 'quanto vendemos mês passado?',
+  access: fullAccess(),
 };
 
 describe('buildSystemPrompt', () => {
   it('embeds today so the model never guesses the date', () => {
-    expect(buildSystemPrompt('2026-03-15')).toContain('2026-03-15');
+    expect(buildSystemPrompt('2026-03-15', ['Visão geral'])).toContain('2026-03-15');
   });
 
   it('forbids inventing numbers', () => {
-    expect(buildSystemPrompt('2026-03-15')).toMatch(/nunca estime|jamais/i);
+    expect(buildSystemPrompt('2026-03-15', ['Visão geral'])).toMatch(/nunca estime|jamais/i);
   });
 
   it('warns about cents explicitly', () => {
-    expect(buildSystemPrompt('2026-03-15')).toMatch(/CENTAVOS/);
+    expect(buildSystemPrompt('2026-03-15', ['Visão geral'])).toMatch(/CENTAVOS/);
   });
 
   it('states what the agent does not have access to', () => {
-    const prompt = buildSystemPrompt('2026-03-15');
+    const prompt = buildSystemPrompt('2026-03-15', ['Visão geral']);
     expect(prompt).toMatch(/Crashlytics/);
     expect(prompt).toMatch(/performance/i);
   });
 
   it('requires the causality caveat to be repeated for every tool that returns one', () => {
-    const prompt = buildSystemPrompt('2026-03-15');
+    const prompt = buildSystemPrompt('2026-03-15', ['Visão geral']);
     expect(prompt).toMatch(/correlacionar/);
     expect(prompt).toMatch(/impacto_da_versao/);
     expect(prompt).toMatch(/impacto_da_tela/);
   });
 });
 
+describe('buildSystemPrompt módulos', () => {
+  it('system prompt lists only the given module labels', () => {
+    const prompt = buildSystemPrompt('2026-03-15', ['Visão geral', 'Produtos']);
+    expect(prompt).toContain('MÓDULOS DISPONÍVEIS: Visão geral, Produtos');
+    expect(prompt).not.toContain('Sprint');
+    expect(prompt).toContain('respondendo no painel');
+    expect(prompt).not.toMatch(/respondendo por WhatsApp/);
+  });
+
+  it('the scope section does not enumerate domains outside the given modules', () => {
+    const prompt = buildSystemPrompt('2026-03-15', ['Produtos']);
+    const scope = prompt.slice(prompt.indexOf('SEU ESCOPO'), prompt.indexOf('MÓDULOS DISPONÍVEIS'));
+    expect(scope).not.toMatch(/aplicativo|versões do app|origens de tráfego|sessões/);
+  });
+});
+
 describe('runAgent', () => {
+  it('the system prompt lists the data modules, never the assistant itself', async () => {
+    let system = '';
+    const model = new MockLanguageModelV2({
+      modelId: 'mock-sonnet',
+      doGenerate: async ({ prompt }) => {
+        const first = prompt[0] as { role: string; content: unknown };
+        if (first.role === 'system') system = String(first.content);
+        return {
+          finishReason: 'stop' as const, usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          content: [{ type: 'text' as const, text: 'ok' }], warnings: [],
+        };
+      },
+    });
+    await runAgent({ ...baseInput, gateway: buildGateway(), model });
+    expect(system).toContain('MÓDULOS DISPONÍVEIS: Visão geral');
+    expect(system).not.toContain('Assistente de IA');
+  });
+
+  it('returns usage from the model response', async () => {
+    const model = new MockLanguageModelV2({
+      modelId: 'mock-sonnet',
+      doGenerate: async () => ({
+        finishReason: 'stop' as const, usage: { inputTokens: 123, outputTokens: 45, totalTokens: 168 },
+        content: [{ type: 'text' as const, text: 'ok' }], warnings: [],
+      }),
+    });
+    const result = await runAgent({ ...baseInput, gateway: buildGateway(), model });
+    expect(result.usage).toEqual({ model: 'mock-sonnet', inputTokens: 123, outputTokens: 45 });
+  });
+
+  it('sums token usage across steps', async () => {
+    let call = 0;
+    const model = new MockLanguageModelV2({
+      modelId: 'mock-sonnet',
+      doGenerate: async () => {
+        call += 1;
+        if (call === 1) {
+          return {
+            finishReason: 'tool-calls' as const, usage: { inputTokens: 100, outputTokens: 20, totalTokens: 120 },
+            content: [{
+              type: 'tool-call' as const, toolCallId: 'c1', toolName: 'listar_metricas', input: '{}',
+            }],
+            warnings: [],
+          };
+        }
+        return {
+          finishReason: 'stop' as const, usage: { inputTokens: 150, outputTokens: 30, totalTokens: 180 },
+          content: [{ type: 'text' as const, text: 'ok' }], warnings: [],
+        };
+      },
+    });
+    const result = await runAgent({ ...baseInput, gateway: buildGateway(), model });
+    expect(result.usage).toEqual({ model: 'mock-sonnet', inputTokens: 250, outputTokens: 50 });
+  });
+
+  it('turns missing token counts into null', async () => {
+    const model = new MockLanguageModelV2({
+      doGenerate: async () => ({
+        finishReason: 'stop' as const,
+        usage: { inputTokens: undefined, outputTokens: undefined, totalTokens: undefined },
+        content: [{ type: 'text' as const, text: 'ok' }], warnings: [],
+      }),
+    });
+    const result = await runAgent({ ...baseInput, gateway: buildGateway(), model });
+    expect(result.usage.inputTokens).toBeNull();
+    expect(result.usage.outputTokens).toBeNull();
+  });
+
   it('returns the model reply when no tool is needed', async () => {
     const result = await runAgent({
       ...baseInput, gateway: buildGateway(),

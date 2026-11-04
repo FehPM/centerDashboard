@@ -37,9 +37,10 @@ export async function registerAttributionRoutes(app: FastifyInstance, deps: AppD
 
       const organization = await deps.prisma.organization.findUnique({
         where: { id: body.organizationId },
-        select: { id: true },
+        select: { id: true, status: true },
       });
-      if (!organization) {
+      // Cliente suspenso recebe a MESMA resposta de um desconhecido: não revela que existe.
+      if (!organization || organization.status !== 'ACTIVE') {
         return reply.status(404).send({ error: 'not_found', message: 'organização desconhecida' });
       }
 

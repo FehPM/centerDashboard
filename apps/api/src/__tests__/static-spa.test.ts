@@ -32,7 +32,7 @@ async function buildTestServer(webRoot: string) {
       gateway: { listMetrics: jest.fn(async () => []) } as unknown as MetricGateway,
       pseudonymizer: new Pseudonymizer(testConfig.piiPepper),
       secretBox: new SecretBox(testConfig.credentialsEncryptionKey),
-      queue: { enqueue: jest.fn(async () => {}) },
+      queue: { enqueue: jest.fn(async () => {}) }, connectors: {} as never,
     },
     { webRoot },
   );
@@ -165,6 +165,14 @@ describe('static dashboard + SPA fallback', () => {
     expect(response.statusCode).toBe(200);
     expect(response.headers['content-type']).toMatch(/text\/html/);
     expect(response.body).toContain('dashboard');
+    await app.close();
+  });
+
+  it('GET /internal/whatever returns JSON 404, not index.html', async () => {
+    const app = await buildTestServer(webRoot);
+    const response = await app.inject({ method: 'GET', url: '/internal/whatever' });
+    expect(response.statusCode).toBe(404);
+    expect(response.headers['content-type']).toMatch(/application\/json/);
     await app.close();
   });
 });

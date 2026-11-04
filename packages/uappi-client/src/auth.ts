@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { UappiApiError } from './errors.js';
 
 const APP_TOKEN = 'wapstore';
 const TOKEN_LIFETIME_MS = 30 * 60_000;
@@ -73,7 +74,10 @@ export class UappiTokenProvider {
 
     if (!response.ok) {
       const body = (await response.json().catch(() => null)) as { message?: string } | null;
-      throw new Error(
+      // UappiApiError com o status: um 401/403 aqui é credencial recusada, e o
+      // conector precisa distinguir isso de uma Uappi fora do ar.
+      throw new UappiApiError(
+        response.status,
         `autenticação na Uappi falhou (${response.status})${body?.message ? `: ${body.message}` : ''}`,
       );
     }

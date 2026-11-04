@@ -4,6 +4,21 @@ import { http, HttpResponse } from 'msw';
 import { mswServer } from '../test/msw-server.js';
 import { renderWithProviders } from '../test/render.js';
 import { OverviewPage } from '../pages/OverviewPage.js';
+import { setAuthToken } from '../lib/api-client.js';
+import { MODULES, meHandler } from './helpers-me.js';
+
+const ALL_MODULES = [
+  MODULES.overview!,
+  { key: 'app_usage', label: 'Uso do app', menuPath: '/uso-do-app', state: 'ready' as const },
+  { key: 'quality', label: 'Qualidade', menuPath: '/qualidade', state: 'ready' as const },
+  { key: 'sprint', label: 'Sprint', menuPath: '/sprint', state: 'ready' as const },
+];
+
+beforeEach(() => {
+  setAuthToken('t');
+  mswServer.use(meHandler({ modules: ALL_MODULES, sources: ['commerce', 'ga4', 'firebase', 'quality', 'sprint'] }));
+});
+afterEach(() => setAuthToken(null));
 
 function seriesFor(metricId: string, total: number) {
   const source = metricId.startsWith('commerce') ? 'commerce' : metricId.startsWith('firebase') ? 'firebase' : 'ga4';
@@ -87,6 +102,58 @@ describe('OverviewPage', () => {
     renderWithProviders(<OverviewPage today="2026-03-15" />, { route: '/' });
     await waitFor(() => expect(screen.getByText('Cancelado')).toBeInTheDocument());
     expect(screen.getByText('Aguardando pagamento')).toBeInTheDocument();
+  });
+
+  it('without acquisition the batch has no ga4 metrics', async () => {
+    const handler = jest.fn();
+    mockEndpoints(handler);
+    mswServer.use(meHandler({ modules: [MODULES.overview!], sources: ['commerce'] }));
+    renderWithProviders(<OverviewPage today="2026-03-15" />, { route: '/' });
+    await waitFor(() => expect(handler).toHaveBeenCalled());
+    const ids = handler.mock.calls[0][0].queries.map((q: { metricId: string }) => q.metricId);
+    expect(ids.some((id: string) => id.startsWith('ga4.'))).toBe(false);
+    expect(screen.queryByText('Feedback recebido')).not.toBeInTheDocument();
+  });
+
+  // I2: Aquisição em vigor com o GA4 ainda pendente (o normal no onboarding).
+  it('a pending source is not queried: its cards wait for setup and the commerce cards keep working', async () => {
+    const handler = jest.fn();
+    mockEndpoints(handler);
+    mswServer.use(meHandler({
+      modules: [MODULES.overview!, { ...MODULES.acquisition!, state: 'awaiting_setup' }],
+      sources: ['commerce', 'ga4', 'behavior'],
+      readySources: ['commerce'],
+    }));
+    renderWithProviders(<OverviewPage today="2026-03-15" />, { route: '/' });
+    await waitFor(() => expect(handler).toHaveBeenCalled());
+    const ids = handler.mock.calls[0][0].queries.map((q: { metricId: string }) => q.metricId);
+    expect(ids).toEqual(['commerce.revenue', 'commerce.orders', 'commerce.average_ticket', 'commerce.new_customers']);
+    expect(await screen.findByText('R$ 4.800,00')).toBeInTheDocument();
+    expect(screen.getAllByText(/Aguardando configuração/)).toHaveLength(2);
+    expect(screen.getByText('Sessões')).toBeInTheDocument();
+    expect(screen.queryAllByRole('alert')).toHaveLength(0);
+  });
+
+  it('shows a non-blocking "updated until" notice when the last sync failed', async () => {
+    mockEndpoints();
+    mswServer.use(meHandler({
+      modules: [MODULES.overview!], sources: ['commerce'],
+      commerceSync: { lastSyncedAt: '2026-03-14T21:30:00.000Z', lastAttemptFailed: true },
+    }));
+    renderWithProviders(<OverviewPage today="2026-03-15" />, { route: '/' });
+    expect(await screen.findByText(/Dados da loja atualizados até 14\/03\/2026, 18:30/)).toBeInTheDocument();
+    expect(await screen.findByText('R$ 4.800,00')).toBeInTheDocument();
+  });
+
+  it('shows no sync notice when the last sync succeeded', async () => {
+    mockEndpoints();
+    mswServer.use(meHandler({
+      modules: [MODULES.overview!], sources: ['commerce'],
+      commerceSync: { lastSyncedAt: '2026-03-14T21:30:00.000Z', lastAttemptFailed: false },
+    }));
+    renderWithProviders(<OverviewPage today="2026-03-15" />, { route: '/' });
+    expect(await screen.findByText('R$ 4.800,00')).toBeInTheDocument();
+    expect(screen.queryByText(/Dados da loja atualizados/)).not.toBeInTheDocument();
   });
 
   it('shows the error on every card when the batch fails', async () => {

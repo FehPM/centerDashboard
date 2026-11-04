@@ -28,13 +28,31 @@ async function setup(organizationId = 'org_1') {
       findUnique: jest.fn(async () => ({
         id: 'user_1', email: 'ana@example.com', name: 'Ana', role: 'ADMIN' as const,
         organizationId, passwordHash: await hashPassword('segredo123'),
+        active: true, mustChangePassword: false,
       })),
     },
     organization: {
       findUnique: jest.fn(async () => ({
-        id: organizationId, ga4PropertyId: `prop_${organizationId}`,
-        ga4BigQueryDataset: null, uappiApiKey: null, uappiSecretKey: null,
+        id: organizationId, name: 'Loja', status: 'ACTIVE',
       })),
+    },
+    // Acesso total: todos os módulos contratados e todas as integrações OK.
+    organizationModule: {
+      findMany: jest.fn(async () => [
+        'overview', 'products', 'acquisition', 'app_usage', 'quality', 'sprint', 'assistant',
+      ].map((moduleKey) => ({
+        moduleKey, status: 'ACTIVE', startsAt: new Date('2020-01-01'), endsAt: null,
+      }))),
+    },
+    userModuleAccess: { findMany: jest.fn(async () => []) },
+    integration: {
+      findMany: jest.fn(async () => [
+        { kind: 'COMMERCE', status: 'OK', config: {} },
+        { kind: 'WEB_ANALYTICS', status: 'OK', config: { propertyId: `prop_${organizationId}`, bigQueryDataset: 'ds' } },
+        { kind: 'APP_ANALYTICS', status: 'OK', config: {} },
+        { kind: 'PLAY_STORE', status: 'OK', config: {} },
+        { kind: 'SPRINT_BOARD', status: 'OK', config: {} },
+      ]),
     },
   } as unknown as PrismaClient;
 
@@ -42,7 +60,7 @@ async function setup(organizationId = 'org_1') {
     config: testConfig, prisma, gateway,
     pseudonymizer: new Pseudonymizer(testConfig.piiPepper),
     secretBox: new SecretBox(testConfig.credentialsEncryptionKey),
-    queue: { enqueue: jest.fn(async () => {}) },
+    queue: { enqueue: jest.fn(async () => {}) }, connectors: {} as never,
   });
   const login = await app.inject({
     method: 'POST', url: '/auth/login',
@@ -101,7 +119,7 @@ describe('POST /api/metrics/query', () => {
     });
     expect(gateway.queryMetric).toHaveBeenCalledWith({
       ...validQuery,
-      tenant: { organizationId: 'org_1', externalIds: { ga4PropertyId: 'prop_org_1' } },
+      tenant: { organizationId: 'org_1', externalIds: { ga4PropertyId: 'prop_org_1', ga4BigQueryDataset: 'ds' } },
     });
     await app.close();
   });
