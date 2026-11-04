@@ -5,4 +5,7 @@ node_modules
 coverage
 .git
 .env
+.env.*
+!.env.example
+*.env
 *.log

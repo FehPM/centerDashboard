@@ -23,8 +23,10 @@ services:
     restart: unless-stopped
 
   api:
-    build: .
-    env_file: [.env]
+    build:
+      context: .
+      target: runtime
+    env_file: ['${ENV_FILE:-.env}']
     # DATABASE_URL/REDIS_URL do .env normalmente apontam para localhost (uso local
     # com docker-compose.yml, que publica as portas no host). Dentro da rede deste
     # compose, os serviços são alcançados pelo nome (postgres/redis), não localhost.
@@ -34,7 +36,15 @@ services:
       REDIS_URL: redis://redis:6379
       # Um proxy reverso na frente da API (padrão em produção); ajuste se a topologia mudar.
       TRUST_PROXY_HOPS: ${TRUST_PROXY_HOPS:-1}
-    ports: ['3333:3333']
+      # Back-office (mundo do operador) e CORS: devem existir e bater com as URLs públicas.
+      OPERATOR_JWT_SECRET: ${OPERATOR_JWT_SECRET:?defina OPERATOR_JWT_SECRET (>=32 caracteres, diferente de JWT_SECRET)}
+      PANEL_ORIGIN: ${PANEL_ORIGIN:-http://localhost:3333}
+      BACKOFFICE_ORIGIN: ${BACKOFFICE_ORIGIN:-http://localhost:8080}
+      MONDAY_API_TOKEN: ${MONDAY_API_TOKEN:-}
+    # Publicada só em loopback por padrão: com TRUST_PROXY_HOPS=1, um acesso direto
+    # de fora poderia forjar X-Forwarded-For. O proxy reverso do mesmo host alcança
+    # a porta por 127.0.0.1; use API_BIND=0.0.0.0 só se o proxy estiver em outra máquina.
+    ports: ['${API_BIND:-127.0.0.1}:3333:3333']
     depends_on:
       postgres: { condition: service_healthy }
       redis: { condition: service_healthy }
@@ -42,8 +52,8 @@ services:
     restart: unless-stopped
 
   sync:
-    build: .
-    env_file: [.env]
+    build: { context: ., target: runtime }
+    env_file: ['${ENV_FILE:-.env}']
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?schema=public
       REDIS_URL: redis://redis:6379
@@ -52,10 +62,20 @@ services:
     command: node dist/sync/sync-worker-main.js
     restart: unless-stopped
 
+  backoffice:
+    build:
+      context: .
+      target: backoffice
+      args:
+        # URL pública da API, embutida no bundle do back-office em tempo de build.
+        VITE_API_URL: ${BACKOFFICE_API_URL:-http://localhost:3333}
+    ports: ['${BACKOFFICE_BIND:-127.0.0.1}:8080:80']
+    restart: unless-stopped
+
   whatsapp:
     profiles: ["whatsapp"]
-    build: .
-    env_file: [.env]
+    build: { context: ., target: runtime }
+    env_file: ['${ENV_FILE:-.env}']
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?schema=public
       REDIS_URL: redis://redis:6379

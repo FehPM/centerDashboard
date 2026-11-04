@@ -45,6 +45,31 @@ cenários (local vs. este compose).
 O serviço `api` roda `prisma migrate deploy` antes de iniciar, então a migração
 acontece no deploy sem passo manual.
 
+**Serviços e portas.** O compose sobe também o `backoffice` (nginx estático com o
+console da Blan, porta `8080`). A imagem dele é construída com a URL da API embutida:
+defina `BACKOFFICE_API_URL` (padrão `http://localhost:3333`) com a URL pública da API
+(ex.: `https://api.<domínio>`) e refaça o build quando ela mudar. A `api` recebe
+`OPERATOR_JWT_SECRET`, `PANEL_ORIGIN`, `BACKOFFICE_ORIGIN` e `MONDAY_API_TOKEN` do
+`.env`; as origens precisam bater com as URLs públicas do painel e do back-office
+(CORS).
+
+**Bind das portas.** `3333` (API) e `8080` (back-office) são publicadas só em
+`127.0.0.1` (`API_BIND`, `BACKOFFICE_BIND`). O proxy reverso no mesmo host as alcança
+por loopback; com `TRUST_PROXY_HOPS=1`, expor a `3333` direto à internet deixaria
+qualquer um forjar `X-Forwarded-For`. Só defina `0.0.0.0` se o proxy estiver em outra
+máquina.
+
+**Teste de fumaça sem tocar no banco local.** Os dois composes compartilham o nome do
+projeto e o volume `pgdata`, e o `api` de produção roda `migrate deploy`. Sempre use
+um projeto e um env próprios. O `smoke.env` (valores fictícios) **precisa conter
+`ENV_FILE=smoke.env`**, senão o `env_file` dos containers cai no `.env` real:
+
+```bash
+docker compose -p center-smoke -f docker-compose.prod.yml --env-file smoke.env up -d --build
+curl -s localhost:3333/health && curl -sI localhost:8080/clientes
+docker compose -p center-smoke -f docker-compose.prod.yml --env-file smoke.env down -v
+```
+
 **No primeiro deploy, o serviço `sync` executa um backfill de 90 dias.** Numa loja
 com 10 mil pedidos/mês isso leva algumas horas por causa do limite de 60 req/min no
 endpoint de detalhe da Uappi. É esperado. Acompanhe:
