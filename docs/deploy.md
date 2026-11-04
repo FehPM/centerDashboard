@@ -19,8 +19,7 @@
 >   (`admin.<domínio>`) e chama a API pela URL absoluta.
 > - O provisionamento passa a ser: script `create-operator` para o primeiro
 >   operador e, depois, tudo pelo back-office (clientes, módulos, integrações e
->   o primeiro Admin de cada cliente). A seção "Provisionamento" abaixo vale até
->   essa migração.
+>   o primeiro Admin de cada cliente).
 
 ## Staging
 
@@ -54,67 +53,50 @@ endpoint de detalhe da Uappi. É esperado. Acompanhe:
 docker compose -f docker-compose.prod.yml logs -f sync
 ```
 
-## Provisionamento da primeira organização e do primeiro admin
+## Provisionamento do primeiro operador e dos clientes
 
 `prisma migrate deploy` (rodado automaticamente pelo serviço `api` acima) só cria o
-schema — o banco continua **vazio**. Sem uma organização e um usuário, ninguém
-consegue logar, a tela de Configurações (onde as credenciais da Uappi/GA4 são
-cadastradas) fica inalcançável, `syncAllOrganizations` não encontra nenhuma
-organização para sincronizar, e nenhum código de vínculo do WhatsApp pode ser
-gerado. Este passo é obrigatório antes de qualquer outra coisa funcionar.
-
-Rode, uma única vez, contra o serviço `api` já em pé:
+schema — o banco continua **vazio**. Crie o primeiro operador da Blan, uma única
+vez, contra o serviço `api` já em pé:
 
 ```bash
 docker compose -f docker-compose.prod.yml exec \
-  -e PROVISION_ORG_NAME="Nome da Loja" \
-  -e PROVISION_ADMIN_NAME="Seu Nome" \
-  -e PROVISION_ADMIN_EMAIL="voce@suaempresa.com" \
-  -e PROVISION_ADMIN_PASSWORD="escolha uma senha forte, 12+ caracteres" \
-  api node dist/scripts/provision-admin.js
+  -e OPERATOR_EMAIL="voce@suaempresa.com" \
+  -e OPERATOR_NAME="Seu Nome" \
+  -e OPERATOR_PASSWORD="escolha uma senha forte" \
+  api node dist/scripts/create-operator.js
 ```
 
-**Sem credencial padrão.** O script não tem organização nem senha embutida — as
-quatro variáveis acima são obrigatórias e validadas (mesmo padrão Zod de
-`src/config.ts`); faltando ou inválida alguma, ele recusa antes de tocar no banco
-e lista todos os problemas de uma vez.
+O operador entra no back-office (`admin.<domínio>`; o TOTP é cadastrado no primeiro
+login), cria o cliente, suas integrações e módulos, e cria o Admin do cliente com
+senha provisória. O antigo `provision-admin` foi removido.
 
-**Idempotente, mas conservador: recusa em vez de sobrescrever.** O script checa
-tanto usuários quanto organizações antes de escrever, e recusa se qualquer um dos
-dois já existir:
+## Remoção das colunas antigas (Task 21)
 
-- **Qualquer usuário já existe** — seja porque este comando já rodou antes, seja
-  por qualquer outro motivo — recusa com saída não-zero
-  ("recusado: já existem N usuário(s)...").
-- **Uma organização já existe mas nenhum usuário** (banco em estado parcial —
-  por exemplo uma organização criada por fora deste script) — recusa também,
-  com uma mensagem própria ("recusado: já existe(m) N organização(ões)... mas
-  nenhum usuário..."). Sem esta segunda checagem, o script criaria uma
-  SEGUNDA organização a cada execução enquanto nenhum usuário existisse.
+A migração `20261115000000_drop_legacy_org_integration_columns` apaga de
+`Organization` as colunas de integração (Uappi, GA4, Play, App Store, Monday,
+`statusMapping`). **É irreversível.** Como o container `api` roda
+`prisma migrate deploy` ao subir, o `migrate-to-multitenant` precisa ter rodado
+com sucesso no ambiente ANTES de publicar a versão que contém esta migração.
 
-Em ambos os casos, **nada é alterado**: não troca senha, não cria uma segunda
-organização, não faz upsert por e-mail. Rodar o comando de novo por engano
-(segunda vez, ou contra o banco errado) é seguro — na pior hipótese, é um no-op
-que avisa. A checagem e as duas escritas (organização + admin) rodam na mesma
-transação: se uma corrida concorrente (duas execuções simultâneas) colidir no
-e-mail, a organização criada naquela chamada específica é desfeita junto — nunca
-fica um registro órfão.
+1. Faça backup do banco.
+2. `pnpm -w build`. O script lê as colunas legadas por `$queryRaw`, então a
+   versão do Prisma client não importa.
+3. `node apps/api/dist/scripts/migrate-to-multitenant.js` (com a
+   `CREDENTIALS_ENCRYPTION_KEY` correta do ambiente; confira os avisos).
+4. `pnpm --filter @center/api exec prisma migrate deploy`.
+5. `pnpm --filter @center/api exec prisma generate`.
+6. `pnpm -w build`.
+7. `node apps/api/dist/scripts/migrate-to-multitenant.js` de novo (deve rodar
+   sem planejar integrações).
 
-Isso não elimina toda corrida possível: duas execuções verdadeiramente
-simultâneas contra um banco igualmente vazio, com e-mails DIFERENTES, ainda
-podem ambas passar pela checagem (READ COMMITTED não é uma trava) e ambas
-criar organização + admin — só o índice único de e-mail do usuário barra o
-caso de mesmo e-mail. Esse cenário é aceito como operacional: rode o
-provisionamento uma única vez, de um único lugar.
-
-Para adicionar organizações/usuários adicionais depois do primeiro admin, use a
-própria aplicação já provisionada (não há hoje uma segunda rota/script para isso —
-é escopo intencionalmente fora deste bootstrap).
-
-`dist/scripts/provision-admin.js` só existe porque `apps/api` compila `scripts/`
-como uma segunda unidade TypeScript (`tsconfig.scripts.json`, mesmo mecanismo já
-usado por `warm-cache.js`/`health-report.js`) — não precisa de nenhum passo extra
-além do `pnpm build` que a imagem já roda.
+A migração tem duas proteções: recusa se algum cliente está sem `slug` ou se
+guarda um valor legado sem a `Integration` correspondente. Se disparar, ela fica
+registrada como falha e os deploys seguintes param com `P3009`. Corrija a causa
+(rode o script com a chave certa, ou anule a coluna legada que você abandona de
+propósito), rode
+`pnpm --filter @center/api exec prisma migrate resolve --rolled-back 20261115000000_drop_legacy_org_integration_columns`
+e faça o deploy de novo.
 
 ## Acessando o dashboard
 
@@ -122,7 +104,7 @@ A API (`dist/main.js`) também serve o dashboard React já compilado
 (`apps/web/dist`, empacotado na mesma imagem) na própria origem — não existe (nem é
 necessário) um serviço `web` separado no `docker-compose.prod.yml`. Depois do
 provisionamento acima, abra `http://<host>:3333/` (ou o domínio que aponta para o
-serviço `api`) e faça login com o e-mail/senha do `PROVISION_ADMIN_*`. Rotas do
+serviço `api`) e faça login como Admin do cliente, com a senha provisória definida pelo operador no back-office (a troca é exigida no primeiro acesso). Rotas do
 dashboard que não existem como arquivo (ex.: `/produtos`, uma rota client-side do
 react-router) caem de volta na `index.html`, então o deep-link funciona; rotas
 desconhecidas sob `/api`, `/auth`, `/public` e `/webhooks` continuam devolvendo 404

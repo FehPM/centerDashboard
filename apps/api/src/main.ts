@@ -68,7 +68,7 @@ const mcpServers: McpServerConfig[] = [
 const pool = await McpPool.spawn(mcpServers);
 const gateway = new MetricGateway(pool, new RedisCacheStore(redis));
 const queue = new BullMessageQueue(redis);
-// Decifra uappiApiKey/uappiSecretKey (T24B) — nunca lidos em claro do Postgres.
+// Decifra Integration.secrets — nunca lidos em claro do Postgres.
 const secretBox = new SecretBox(config.credentialsEncryptionKey);
 
 const app = await buildServer({

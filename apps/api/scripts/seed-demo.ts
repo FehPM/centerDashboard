@@ -42,7 +42,7 @@ async function main(): Promise<number> {
     if (!org) {
       console.error(
         'recusado: nenhuma organização encontrada no banco. Este script só popula uma organização já ' +
-          'existente — rode "pnpm db:seed" (desenvolvimento) ou "node dist/scripts/provision-admin.js" ' +
+          'existente — rode "pnpm db:seed" (desenvolvimento) ou crie o cliente no back-office ' +
           '(primeira instalação) antes de tentar de novo. Nada foi alterado.',
       );
       return 1;

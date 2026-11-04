@@ -11,7 +11,7 @@ export interface AppDeps {
   prisma: PrismaClient;
   gateway: MetricGateway;
   pseudonymizer: Pseudonymizer;
-  /** Decifra `uappiApiKey`/`uappiSecretKey` — usado pelas rotas de configuração (T24B). */
+  /** Decifra `Integration.secrets` — usado pelas rotas de configuração (T24B). */
   secretBox: SecretBox;
   queue: MessageQueue;
   /** Conectores de e-commerce (a Uappi é o primeiro). */

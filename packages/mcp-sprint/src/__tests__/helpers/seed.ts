@@ -10,7 +10,7 @@ export async function resetSprintData(): Promise<void> {
   await prisma.organization.upsert({
     where: { id: TEST_ORG },
     update: {},
-    create: { id: TEST_ORG, name: 'Org de Teste (Sprint)' },
+    create: { id: TEST_ORG, name: 'Org de Teste (Sprint)', slug: 'teste-sprint' },
   });
 }
 

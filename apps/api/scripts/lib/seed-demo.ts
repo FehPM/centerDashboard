@@ -1,7 +1,7 @@
 /**
  * Peças puras/testáveis de `seed-demo.ts` — separadas do arquivo de entrada
  * (que faz I/O real: Postgres, `SecretBox`, o sync de verdade) pelo mesmo
- * motivo que `provision-admin.ts` foi dividido em T24B: as decisões de
+ * motivo da divisão em arquivo de entrada e lib: as decisões de
  * negócio (recusar rodar fora de modo mock, nunca sobrescrever credencial
  * existente, derivar um toque de atribuição de um pedido já sincronizado)
  * precisam ser exercitadas em teste sem depender de um Postgres real.

@@ -23,7 +23,6 @@
     "warm:cache": "node --experimental-strip-types scripts/warm-cache.ts",
     "health:report": "node --experimental-strip-types scripts/health-report.ts",
     "create:operator": "node dist/scripts/create-operator.js",
-    "provision:admin": "node --experimental-strip-types scripts/provision-admin.ts",
     "seed:demo": "node --experimental-strip-types scripts/seed-demo.ts",
     "migrate:multitenant": "node dist/scripts/migrate-to-multitenant.js"
   },

@@ -127,16 +127,18 @@ pnpm db:seed
 Cria **`admin@center.local` / `center-dev-123`**.
 
 ⚠️ Essa senha está publicada no repositório. Serve para a sua máquina e nada
-mais. Para ambiente compartilhado use o provisionamento, que exige senha de 12+
-caracteres e recusa banco que já tenha organização ou usuário:
+mais. Em ambiente compartilhado crie um operador da Blan e, pelo back-office,
+o cliente e o Admin dele:
 
 ```bash
-PROVISION_ORG_NAME="Minha Loja" \
-PROVISION_ADMIN_NAME="Rafael" \
-PROVISION_ADMIN_EMAIL="rafael@exemplo.com" \
-PROVISION_ADMIN_PASSWORD="uma-senha-longa-de-verdade" \
-  node dist/scripts/provision-admin.js
+OPERATOR_EMAIL="rafael@exemplo.com" \
+OPERATOR_NAME="Rafael" \
+OPERATOR_PASSWORD="uma-senha-longa-de-verdade" \
+  node dist/scripts/create-operator.js
 ```
+
+O operador entra no back-office (o TOTP é cadastrado no primeiro login), cria o
+cliente, suas integrações e módulos, e cria o Admin do cliente.
 
 ## 6. Popular os dados
 
@@ -278,13 +280,12 @@ bot, não um bug.
 
 ## ⚠️ Scripts quebrados no Node 22
 
-`provision:admin`, `health:report`, `warm:cache`, `eval:agent` e `seed:demo`
+`health:report`, `warm:cache`, `eval:agent` e `seed:demo`
 usam `--experimental-strip-types`, que não remapeia `./x.js` para o `.ts` irmão
 — morrem com `ERR_MODULE_NOT_FOUND`. Use sempre o compilado:
 
 | Em vez de | Use |
 |---|---|
-| `pnpm provision:admin` | `node dist/scripts/provision-admin.js` |
 | `pnpm health:report` | `node dist/scripts/health-report.js` |
 | `pnpm warm:cache` | `node dist/scripts/warm-cache.js` |
 | `pnpm eval:agent` | `node dist/scripts/eval-agent.js` |

@@ -39,7 +39,7 @@ export async function resetCommerceData(): Promise<void> {
   await prisma.organization.upsert({
     where: { id: TEST_ORG },
     update: {},
-    create: { id: TEST_ORG, name: 'Loja de Teste' },
+    create: { id: TEST_ORG, name: 'Loja de Teste', slug: 'teste-commerce' },
   });
 }
 
