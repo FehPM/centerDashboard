@@ -1,15 +1,16 @@
-// Loads the repo-root .env before tests run so DATABASE_URL (and friends) are
-// available without requiring every developer/CI runner to export it manually.
+// Os testes deste pacote batem num Postgres real via Prisma.
 //
-// Scoped to this package only (not jest.preset.cjs) because @center/mcp-commerce
-// is the first package whose tests hit a real Postgres instance via Prisma.
-//
-// dotenv.config() does NOT override variables that are already set in
-// process.env (see https://github.com/motdotla/dotenv#what-happens-to-environment-variables-that-were-already-set).
-// In CI (T38) DATABASE_URL is set directly as a workflow env var and there is
-// no .env file on disk, so this is a harmless no-op there: dotenv silently
-// does nothing when the target file doesn't exist.
+// 1. Carrega o .env da raiz só para variáveis que ainda NÃO estão no ambiente
+//    (o dotenv nunca sobrescreve process.env). No CI não há .env e o
+//    DATABASE_URL vem do workflow; localmente, exporte o DATABASE_URL do banco
+//    de teste antes de `pnpm test` (o turbo.json repassa DATABASE_URL e
+//    REDIS_URL para a tarefa `test`).
+// 2. Recusa rodar se o banco não for de teste (nome terminado em `_test`):
+//    o .env de dev aponta para `center`, e a suíte criaria clientes
+//    `org_test_*` nele.
 const path = require('node:path');
 const dotenv = require('dotenv');
+const { assertTestDatabase } = require('../../jest.db-guard.cjs');
 
 dotenv.config({ path: path.resolve(__dirname, '../../.env') });
+assertTestDatabase(process.env.DATABASE_URL);

@@ -32,12 +32,34 @@ export interface ReadFailure {
 
 export type CheckResult = { ok: true } | { ok: false; error: string };
 
+/**
+ * O provedor recusou as credenciais da loja (ex.: HTTP 401/403). É a ÚNICA
+ * falha de leitura que o conector classifica: só ela leva a integração a
+ * `ERROR`. Qualquer outra (provedor fora do ar, timeout, resposta estranha) é
+ * passageira — fica em `SyncState.lastError` e o cliente continua vendo os
+ * dados já sincronizados. A mensagem é fixa, sem corpo da resposta do
+ * provedor.
+ */
+export class CredentialsRejectedError extends Error {
+  constructor(message = 'credenciais recusadas pelo provedor') {
+    super(message);
+    this.name = 'CredentialsRejectedError';
+  }
+}
+
+/** Também reconhece pelo nome, para não depender de uma única cópia do módulo. */
+export function isCredentialsRejected(error: unknown): error is CredentialsRejectedError {
+  return error instanceof CredentialsRejectedError
+    || (error instanceof Error && error.name === 'CredentialsRejectedError');
+}
+
 export interface CommerceConnector<TSettings = unknown> {
   provider: CommerceProvider;
   /** Valida config + segredos já decifrados; lança ZodError se inválidos. */
   parseSettings(config: unknown, secrets: unknown): TSettings;
   check(settings: TSettings): Promise<CheckResult>;
   discover(): readonly ['orders'];
+  /** Lança `CredentialsRejectedError` se o provedor recusar as credenciais. */
   readOrders(
     settings: TSettings,
     window: DateWindow,

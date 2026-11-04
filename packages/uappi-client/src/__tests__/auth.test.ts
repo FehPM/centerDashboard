@@ -1,4 +1,5 @@
 import { UappiTokenProvider } from '../auth.js';
+import { UappiApiError } from '../errors.js';
 
 const credentials = { apiKey: 'ak', secretKey: 'sk' };
 
@@ -80,6 +81,13 @@ describe('UappiTokenProvider', () => {
     ));
     await expect(buildProvider(fetchImpl).getToken())
       .rejects.toThrow('autenticação na Uappi falhou (401): apiKey inválida');
+  });
+
+  it('carries the HTTP status so callers can tell rejected credentials from an outage', async () => {
+    const fetchImpl = jest.fn(async () => new Response('{}', { status: 403 }));
+    const error = await buildProvider(fetchImpl).getToken().catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(UappiApiError);
+    expect(error).toMatchObject({ status: 403 });
   });
 
   it('does not cache a failed authentication', async () => {

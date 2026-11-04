@@ -7,13 +7,14 @@ import {
   type UappiClientLike,
   type UappiCredentials,
 } from '@center/uappi-client';
-import type {
-  CanonicalOrderRecord,
-  CheckResult,
-  CommerceConnector,
-  DateWindow,
-  ReadContext,
-  ReadFailure,
+import {
+  CredentialsRejectedError,
+  type CanonicalOrderRecord,
+  type CheckResult,
+  type CommerceConnector,
+  type DateWindow,
+  type ReadContext,
+  type ReadFailure,
 } from '../types.js';
 import { UappiOrderSchema, UappiOrderSummarySchema } from './schemas.js';
 import { mapOrder } from './mapper.js';
@@ -40,6 +41,12 @@ const ConfigSchema = z.object({
 });
 
 const BUSINESS_TIME_ZONE = 'America/Sao_Paulo';
+const CREDENTIALS_REJECTED = 'credenciais recusadas pela Uappi';
+
+/** 401/403 da Uappi (no token ou na listagem) = credencial recusada. */
+function isAuthFailure(error: unknown): boolean {
+  return error instanceof UappiApiError && (error.status === 401 || error.status === 403);
+}
 
 export function createUappiConnector(opts: UappiConnectorOptions): CommerceConnector<UappiSettings> {
   const buildClient = opts.buildClient ?? ((credentials: UappiCredentials): UappiClientLike => {
@@ -69,9 +76,7 @@ export function createUappiConnector(opts: UappiConnectorOptions): CommerceConne
         await buildClient(settings.credentials).listOrders({ from: today, to: today, offset: 0, limit: 1 });
         return { ok: true };
       } catch (error) {
-        if (error instanceof UappiApiError && (error.status === 401 || error.status === 403)) {
-          return { ok: false, error: 'credenciais recusadas pela Uappi' };
-        }
+        if (isAuthFailure(error)) return { ok: false, error: CREDENTIALS_REJECTED };
         return { ok: false, error: 'Uappi indisponível' };
       }
     },
@@ -87,6 +92,25 @@ export function createUappiConnector(opts: UappiConnectorOptions): CommerceConne
     ): AsyncGenerator<CanonicalOrderRecord | ReadFailure> {
       const client = buildClient(settings.credentials);
 
+      try {
+        yield* readPages(client, settings, window, ctx);
+      } catch (error) {
+        // Só a listagem chega aqui (falha de um pedido vira ReadFailure).
+        // Credencial recusada ganha um erro próprio; o resto sobe como está e
+        // é tratado como falha passageira pelo sync.
+        if (isAuthFailure(error)) throw new CredentialsRejectedError(CREDENTIALS_REJECTED);
+        throw error;
+      }
+    },
+  };
+}
+
+async function* readPages(
+  client: UappiClientLike,
+  settings: UappiSettings,
+  window: DateWindow,
+  ctx: ReadContext,
+): AsyncGenerator<CanonicalOrderRecord | ReadFailure> {
       for await (const page of client.iterateOrders({ from: window.from, to: window.to })) {
         for (const raw of page) {
           const summary = UappiOrderSummarySchema.safeParse(raw);
@@ -112,6 +136,4 @@ export function createUappiConnector(opts: UappiConnectorOptions): CommerceConne
           }
         }
       }
-    },
-  };
 }
