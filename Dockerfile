@@ -16,6 +16,7 @@ COPY packages/mcp-ga4/package.json packages/mcp-ga4/
 COPY packages/mcp-behavior/package.json packages/mcp-behavior/
 COPY apps/api/package.json apps/api/
 COPY apps/web/package.json apps/web/
+COPY apps/backoffice/package.json apps/backoffice/
 RUN pnpm install --frozen-lockfile
 
 FROM deps AS build

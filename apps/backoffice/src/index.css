@@ -1,0 +1,22 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * Tema único, escuro, seguindo a identidade visual do app (fundo quase preto,
+ * azul de marca como destaque).
+ */
+:root {
+  color-scheme: dark;
+  --accent: #009ee0; --accent-foreground: #ffffff;
+  --surface-1: #1b1f27; --page-plane: #12151a;
+  --text-primary: #f5f6fa; --text-secondary: #aeb4c2; --text-muted: #7d8495;
+  --gridline: #2a2f3a; --hairline: rgba(255, 255, 255, 0.08);
+  --good: #0ca30c; --critical: #d03b3b;
+}
+
+body {
+  background-color: var(--page-plane);
+  color: var(--text-primary);
+  font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+}
