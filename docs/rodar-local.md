@@ -1,6 +1,6 @@
 # Rodar o projeto localmente
 
-> **Arquitetura em transição (2026-10-29):** este guia descreve o código como está hoje. O alvo (multi-tenant, módulos, back-office, conectores; WhatsApp fora do MVP) está em [`superpowers/specs/2026-10-29-multi-tenant-modular-design.md`](superpowers/specs/2026-10-29-multi-tenant-modular-design.md) e as regras para quem desenvolve, no `CLAUDE.md` da raiz.
+> Arquitetura multi-tenant e modular: design em [`superpowers/specs/2026-10-29-multi-tenant-modular-design.md`](superpowers/specs/2026-10-29-multi-tenant-modular-design.md); regras para quem desenvolve no `CLAUDE.md` da raiz.
 
 Do zero a um painel preenchido. Tudo aqui foi executado neste repositório; os
 ⚠️ marcam armadilhas reais, não hipóteses.
@@ -47,13 +47,21 @@ GA4_CREDENTIALS_JSON=""
 ANTHROPIC_API_KEY="placeholder"
 ```
 
-⚠️ **`OPERATOR_JWT_SECRET` é obrigatória** desde a arquitetura multi-tenant: é
+⚠️ **`OPERATOR_JWT_SECRET` é obrigatória**: é
 o segredo dos tokens dos operadores da Blan no back-office. Precisa de 32+
 caracteres e **não pode ser igual** ao `JWT_SECRET` — sem ela, ou igual a ele,
 a API, o sync e os scripts não sobem. Gere com `openssl rand -hex 32`.
 
 ⚠️ `JWT_SECRET` e `PII_PEPPER` precisam de 32+ caracteres;
 `CREDENTIALS_ENCRYPTION_KEY` de exatamente 64 hex (`openssl rand -hex 32`).
+O `.env.example` traz `CREDENTIALS_ENCRYPTION_KEY` vazia, e vazia a API não sobe.
+
+As credenciais do GA4 (`GA4_CREDENTIALS_JSON`, `GA4_APP_CREDENTIALS_JSON`) e o
+`MONDAY_API_TOKEN` são **globais da Blan**, no `.env`. O que é por cliente
+(credenciais da Uappi, `propertyId` do GA4, `boardId` do Monday, lojas de apps)
+fica na tabela `Integration` e se configura no back-office (Parte 2).
+`PANEL_ORIGIN` e `BACKOFFICE_ORIGIN` (CORS) já têm os padrões de desenvolvimento
+(`http://localhost:5173` e `http://localhost:5174`).
 
 ⚠️ Só a string literal `"true"` liga o modo mock. `1`, `yes` ou `True` viram
 `false` em silêncio.
@@ -101,17 +109,23 @@ pnpm -w build
 `start:sync` só existem nesse pacote. O `-w` alcança a raiz do workspace sem te
 mover de pasta.
 
-## 5. Criar o usuário
+## 5. Criar usuário e operador de desenvolvimento
 
 ```bash
 pnpm db:seed
 ```
 
-Cria **`admin@center.local` / `center-dev-123`**.
+Cria, de forma idempotente:
 
-⚠️ Essa senha está publicada no repositório. Serve para a sua máquina e nada
-mais. Em ambiente compartilhado crie um operador da Blan e, pelo back-office,
-o cliente e o Admin dele:
+| O quê | Valor |
+|---|---|
+| Cliente | `Loja de Desenvolvimento` (`org_dev`), com os 7 módulos ativos |
+| Admin do cliente | `admin@center.local` / `center-dev-123` |
+| Operador da Blan | `operator@center.local` / `center-dev-123` (sem TOTP: o cadastro acontece no primeiro login; **não** é criado com `NODE_ENV=production`) |
+
+⚠️ Essas senhas estão publicadas no repositório. Servem para a sua máquina e
+nada mais. Em ambiente compartilhado ou de produção crie o primeiro operador
+com o script (ele recusa e-mail já existente):
 
 ```bash
 OPERATOR_EMAIL="rafael@exemplo.com" \
@@ -120,25 +134,36 @@ OPERATOR_PASSWORD="uma-senha-longa-de-verdade" \
   node dist/scripts/create-operator.js
 ```
 
-O operador entra no back-office (o TOTP é cadastrado no primeiro login), cria o
-cliente, suas integrações e módulos, e cria o Admin do cliente.
+O operador entra no back-office (Parte 2), onde o TOTP é cadastrado no primeiro
+login.
 
 ## 6. Popular os dados
 
 ```bash
-node dist/scripts/seed-demo.js
+SYNC_BACKFILL_DAYS=730 node dist/scripts/seed-demo.js
 ```
 
-Um comando cobre as três integrações mockadas: configura a organização
-(`ga4PropertyId`, `ga4BigQueryDataset`, credenciais Uappi cifradas) e sincroniza
-os pedidos pelo pipeline real. Ao final ele imprime as contagens e **o período
-que você deve escolher no painel**.
+Um comando cobre as integrações mockadas: grava as `Integration` do primeiro
+cliente do banco (`org_dev`: e-commerce Uappi com credenciais cifradas, GA4 web
+e app, Play Store, App Store e Sprint) e sincroniza os pedidos pelo pipeline
+real. Ao final ele imprime as contagens e **o período que você deve escolher no
+painel**.
 
 Esperado: 25 pedidos, 35 itens, 22 clientes, R$ 5.254,40, de 2026-07-01 a
 2026-07-29.
 
+⚠️ As fixtures de pedido são de **julho/2026** e o primeiro sync só busca os
+últimos `SYNC_BACKFILL_DAYS` dias (padrão 90). Fora dessa janela o sync termina
+com 0 pedidos **e marca o backfill como feito**: rodar de novo não traz nada.
+Por isso o `SYNC_BACKFILL_DAYS=730` acima. Se você já rodou sem ele, zere o
+estado de sync do banco local e repita:
+
+```bash
+docker compose exec postgres psql -U center -d center -c 'DELETE FROM "SyncState";'
+```
+
 ⚠️ Recusa se `MOCK_EXTERNAL_APIS` não for `"true"`, e nunca sobrescreve
-credencial já configurada. Pode rodar duas vezes sem duplicar nada.
+integração já configurada. Pode rodar duas vezes sem duplicar nada.
 
 ## 7. Subir a API
 
@@ -149,31 +174,80 @@ pnpm start
 Painel em **http://localhost:3333**. Confira com
 `curl http://localhost:3333/health`.
 
-Para mexer no frontend com hot reload, em outro terminal:
+Para mexer nos frontends com hot reload, cada um em outro terminal:
 
 ```bash
-pnpm --filter @center/web dev      # http://localhost:5173
+pnpm --filter @center/web dev          # painel do cliente: http://localhost:5173
+pnpm --filter @center/backoffice dev   # back-office da Blan: http://localhost:5174
 ```
 
-⚠️ O proxy do Vite cobre só `/api` e `/auth`. Para `/public/*` e `/webhooks/*`
-use a 3333 direto.
+⚠️ O proxy do Vite do painel cobre só `/api` e `/auth`. Para `/public/*` e
+`/webhooks/*` use a 3333 direto. O back-office não usa proxy: chama a API por
+URL absoluta (`VITE_API_URL`, padrão `http://localhost:3333`), e o CORS aceita
+as origens `PANEL_ORIGIN` (5173) e `BACKOFFICE_ORIGIN` (5174).
 
 ## 8. Escolher o período
 
-⚠️ As fixtures são de **julho/2026**. Se hoje for agosto, os presets **Hoje**,
-**7 dias** e **30 dias** aparecem vazios — corretamente. Clique em **Mês
-passado** ou **90 dias**.
+⚠️ As fixtures são de **julho/2026**. Os presets **Hoje**, **7 dias** e **30
+dias** só mostram dados enquanto julho/2026 estiver dentro da janela; fora dela
+aparecem vazios — corretamente. Escolha um intervalo customizado que cubra
+2026-07-01 a 2026-07-29.
 
 Os dois estados vazios significam coisas diferentes:
 
 | No card | Significado |
 |---|---|
-| `fonte de dados indisponível` (vermelho) | A consulta **falhou** — quase sempre `ga4PropertyId` ausente |
+| `fonte de dados indisponível` (vermelho) | A consulta **falhou** — a integração do cliente está ausente ou com erro |
 | `Sem dados no período selecionado` | A consulta **funcionou** e voltou vazia — falta dado ou o período não cobre |
 
 ---
 
-# Parte 2 — WhatsApp
+# Parte 2 — Back-office: primeiro acesso
+
+O back-office é o console da equipe Blan. É aqui que se cria o cliente, se
+ativam os módulos, se configuram as integrações (credenciais, propriedades GA4,
+board do Monday) e se cria o primeiro Admin. O cliente nunca vê credenciais.
+
+Pré-requisito: API no ar (Parte 1, passo 7) e
+`pnpm --filter @center/backoffice dev` rodando em **http://localhost:5174**.
+
+1. **Login.** Entre com `operator@center.local` / `center-dev-123` (o operador
+   do `db:seed`) ou com o operador criado pelo `create-operator`.
+2. **TOTP no primeiro login.** A tela mostra um QR code e o segredo; cadastre-os
+   num app autenticador e informe o código de 6 dígitos. Nos logins seguintes
+   só o código é pedido. Cinco códigos errados bloqueiam o operador por 15
+   minutos.
+3. **Criar o cliente.** Em **Clientes**, informe o nome (o slug é gerado, ou
+   informado e único). O cliente nasce sem módulos e sem integrações.
+4. **Módulos.** Na aba **Módulos**, ative os contratados (ex.: `overview` e
+   `products`). Módulo em vigor sem a integração que ele exige aparece como
+   "aguardando configuração".
+5. **Integrações.** Na aba **Integrações**, configure as do cliente (Uappi com
+   `apiKey`/`secretKey`, GA4, lojas de apps, board do Monday). Segredos são
+   cifrados e nunca voltam pela API. A aba mostra também o snippet de
+   atribuição para o site da loja ([checkout-attribution.md](checkout-attribution.md)).
+6. **Primeiro Admin.** Na aba **Usuários**, crie o Admin com e-mail e senha
+   provisória (mínimo 12 caracteres). Informe a senha ao cliente por fora: não
+   há e-mail no MVP.
+7. **Entrar como Admin.** Em http://localhost:5173 (ou 3333) o Admin faz login
+   e é obrigado a trocar a senha. Depois cria **Membros** em Usuários, escolhendo
+   papel e módulos: um Membro só enxerga os módulos que recebeu.
+8. **Conferir.** Um Membro só com `products` vê apenas "Produtos" no menu, e as
+   rotas de outros módulos respondem 403 `module_not_available` (por exemplo,
+   `POST /api/tools/ga4/traffic_sources` com o token dele).
+
+Para ver o painel como o cliente vê, use **Visualizar painel** na página do
+cliente: abre uma sessão **somente leitura** de 30 minutos, com faixa visível e
+sem assistente, registrada na auditoria (**Auditoria** no menu).
+
+---
+
+# Parte 3 — WhatsApp
+
+> **Fora do MVP.** O canal está desligado no código (rotas comentadas desde
+> 2026-09-30) e foi adiado na nova arquitetura até que os detalhes do canal e
+> os custos dos agentes sejam definidos. Os passos abaixo ficam como
+> referência.
 
 Precisa de três coisas que o painel não precisa: chave real da Anthropic,
 credenciais reais da Meta e um **túnel público** (a Meta entrega por webhook e
@@ -249,10 +323,15 @@ bot, não um bug.
 | `ERR_MODULE_NOT_FOUND … config.js` | Usou `pnpm dev` na `apps/api` | Use `pnpm -w build` + `pnpm start` |
 | `ERR_MODULE_NOT_FOUND … scripts/lib/….js` | Script rodado via `pnpm`, não pelo compilado | `node dist/scripts/<nome>.js` |
 | `Can't reach database server` | Docker parado | `docker compose up -d` |
-| Cards de GA4 em `fonte de dados indisponível` | `ga4PropertyId` ausente | Passo 6 |
+| Cards em `fonte de dados indisponível` (API: 409 `integration_pending`) | O cliente não tem a integração da fonte (ex.: GA4 sem `propertyId`) | Back-office → Integrações (Parte 2); no `org_dev`, passo 6 |
 | Tudo em `Sem dados no período` | Banco vazio ou período errado | Passo 6, depois passo 8 |
-| Sync não grava nada | Organização sem credenciais Uappi — o agendador a ignora, mesmo em mock | Passo 6 |
-| Bot responde "não encontrei este número" | Número não vinculado | Parte 2, passo 5 |
+| `seed-demo` termina com 0 pedidos | Fixtures de julho/2026 fora da janela do backfill (90 dias) | `SYNC_BACKFILL_DAYS=730` e, se já rodou, `DELETE FROM "SyncState";` (passo 6) |
+| Sync não grava nada | Cliente sem integração de e-commerce (COMMERCE) configurada — o agendador a ignora, mesmo em mock | Back-office → Integrações, ou passo 6 no `org_dev` |
+| Back-office: erro de CORS / "Failed to fetch" | API fora do ar, `VITE_API_URL` errada ou `BACKOFFICE_ORIGIN` diferente da URL do console | Confira os três; origem padrão `http://localhost:5174` |
+| Back-office: 429 ao informar o TOTP | 5 códigos errados bloqueiam o operador por 15 min | Aguarde |
+| Admin recebe 403 `password_change_required` | Senha provisória ainda não trocada | `POST /auth/password` (o painel pede a troca no login) |
+| `create-operator`: `recusado: …` | E-mail já cadastrado ou dados inválidos | Leia a mensagem; o script não altera nada |
+| Bot responde "não encontrei este número" | Número não vinculado | Parte 3, passo 5 |
 | Bot só responde o fallback | `ANTHROPIC_API_KEY` inválida | Veja o log do worker |
 | `131030 Recipient phone number not in allowed list` | Antes da revisão do app a Meta só entrega a números de teste | Adicione o seu em Configuração da API |
 
@@ -284,21 +363,22 @@ docker compose down                  # derruba
 docker compose down -v               # derruba e APAGA os dados
 ```
 
-Ver os usuários do banco (a senha é hash `scrypt`, **não é recuperável**):
+Ver usuários e operadores do banco (a senha é hash `scrypt`, **não é recuperável**):
 
 ```bash
 docker compose exec postgres psql -U center -d center \
-  -c 'SELECT email, name, role FROM "User";'
+  -c 'SELECT email, name, role, "organizationId" FROM "User";'   -c 'SELECT email, name, active, "totpEnabledAt" FROM "PlatformOperator";'
 ```
 
 ## Mock vs. real
 
 | | Mock (`"true"`) | Real (`"false"`) |
 |---|---|---|
-| Uappi, GA4, BigQuery | Fixtures locais, sem rede | Credenciais reais |
+| Uappi, GA4, BigQuery | Fixtures locais, sem rede | Credenciais reais (configuradas pela Blan no back-office) |
 | Painel | Funciona | Funciona |
 | Agente do WhatsApp | Precisa de chave Anthropic real | Precisa de chave Anthropic real |
 
 Os números em modo mock são **inventados** — não use nenhum deles para conferir
 negócio. O `health-report` avisa quando você está em modo mock justamente por
 isso.
+

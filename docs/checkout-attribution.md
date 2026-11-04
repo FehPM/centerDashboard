@@ -1,7 +1,8 @@
 # Integração de atribuição no checkout
 
-> **Multi-tenant (alvo aprovado em 2026-10-29).** Cada cliente tem o próprio
-> `organizationId`; o back-office mostra o snippet pronto com o valor certo.
+> **Multi-tenant.** Cada cliente tem o próprio `organizationId`. O snippet do
+> passo 1 **sai pronto do back-office**: aba **Integrações** do cliente, bloco de
+> atribuição, já com o `organizationId` e a URL da API certos; basta copiar.
 > `POST /public/attribution` só aceita clientes ativos. Os passos 2 e 3 abaixo
 > são **específicos da Uappi** (`informacoesAdicionais`): cada conector de
 > e-commerce documenta como os campos de atribuição chegam ao pedido na sua
@@ -22,8 +23,11 @@ Coloque antes de `</body>`, **depois** da tag do Google Analytics:
     organizationId: 'org_xxxxx'
   };
 </script>
-<script src="https://app.seudominio.com.br/center-attribution.js" defer></script>
+<script src="https://api.seudominio.com.br/center-attribution.js" defer></script>
 ```
+
+`apiUrl` é a origem **da API**, e o script é servido por ela (`${apiUrl}/center-attribution.js`),
+não pelo painel do cliente. O `organizationId` é o do cliente no back-office.
 
 ## 2. Adicionar os campos ocultos (página de checkout)
 

@@ -1,8 +1,8 @@
 # Design: multi-tenant, módulos contratáveis e conectores de e-commerce
 
 **Data:** 2026-10-29
-**Status:** aprovado em conversa; revisado contra o código em 2026-10-29
-(decisões marcadas "Design (revisão)" na §14)
+**Status:** implementado em 2026-11-04 (aprovado em conversa e revisado contra o
+código em 2026-10-29; decisões marcadas "Design (revisão)" na §14)
 **Plano:** `docs/superpowers/plans/2026-10-29-multi-tenant-modular.md`
 **Substitui:** a premissa de "uma organização, uma integração Uappi fixa" do plano
 `docs/superpowers/plans/2026-08-05-center-analytics-uappi.md`.

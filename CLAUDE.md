@@ -9,34 +9,37 @@ vendas do e-commerce, GA4, uso do app, qualidade nas lojas de apps e o sprint
 da equipe de desenvolvimento num painel, com um assistente de IA que responde
 perguntas sobre esses dados.
 
-## Estado atual × arquitetura-alvo
+## Arquitetura
 
-O projeto está **em transição**. Leia isto antes de mudar qualquer coisa.
+A migração para multi-tenant e módulos está **implementada** (design aprovado em
+2026-10-29, implementado em 2026-11-04).
 
-| | Hoje (no código) | Alvo (aprovado em 2026-10-29) |
-|---|---|---|
-| Clientes | Uma `Organization` com tudo dentro | Multi-tenant: vários clientes, isolados |
-| E-commerce | Uappi embutida (`uappi-client`, `uappi-sync`) | Conectores; a Uappi é o primeiro |
-| Funcionalidades | Todas para todos | **Módulos** contratados por cliente |
-| Administração | `ADMIN` do cliente edita credenciais | **Back-office** da Blan (`apps/backoffice`) configura clientes, módulos e integrações; Admin do cliente gerencia só os próprios usuários |
-| Papéis | `ADMIN`, `VIEWER` | `ADMIN`, `MEMBER` + módulos por Membro |
+| | Como é |
+|---|---|
+| Clientes | Multi-tenant: vários clientes (`Organization`), isolados por `organizationId` |
+| E-commerce | Conectores (`packages/connectors`); a Uappi é o primeiro. Credenciais e config por cliente em `Integration` |
+| Funcionalidades | **Módulos** contratados por cliente (`packages/entitlements`) |
+| Administração | **Back-office** da Blan (`apps/backoffice`, `/internal/*`) configura clientes, módulos e integrações; o Admin do cliente gerencia só os próprios usuários |
+| Papéis | `ADMIN`, `MEMBER` + módulos por Membro (`UserModuleAccess`) |
 
-**Fonte da verdade do alvo:**
+**Fonte da verdade:**
 [docs/superpowers/specs/2026-10-29-multi-tenant-modular-design.md](docs/superpowers/specs/2026-10-29-multi-tenant-modular-design.md).
-**Plano de execução:**
+O plano de execução, já concluído, está em
 [docs/superpowers/plans/2026-10-29-multi-tenant-modular.md](docs/superpowers/plans/2026-10-29-multi-tenant-modular.md).
-Código novo segue o alvo. Não estenda o modelo antigo (ex.: não adicione mais
-colunas de integração em `Organization`).
+Não reintroduza o modelo antigo: integração não vai em colunas de
+`Organization` (as antigas foram removidas), e nada fora do conector conhece a
+plataforma de e-commerce.
 
-## Dúvidas sobre a nova arquitetura: pergunte antes
+## Dúvidas sobre o design: pergunte antes
 
 Se uma tarefa esbarrar em algo que o design **não decide** e que muda o que é
 construído (regra de negócio, o que o cliente vê, o que a Blan controla,
 segurança, cobrança), **pare e pergunte ao responsável pelo produto**. Não
 escolha sozinho. Detalhes de implementação (nomes, divisão de arquivos,
-bibliotecas) são decisão sua; registre-os no PR.
+bibliotecas) são decisão sua; registre-os no PR. Se uma decisão mudar, atualize
+esta página e o design.
 
-## Regras do produto (alvo)
+## Regras do produto
 
 - **Público:** clientes da Blan e empresas sem relação com ela. Nenhum módulo
   pode presumir app mobile ou projeto com a Blan.
@@ -113,13 +116,13 @@ Tailwind, Recharts, TanStack Query. Testes com Jest (`@swc/jest`).
 
 ```
 apps/
-  api/          API Fastify (/api/* cliente; /internal/* operador — alvo), sync worker, agente
+  api/          API Fastify (/api/* cliente; /internal/* operador), sync worker, agente
   web/          painel do cliente (app.<domínio>)
-  backoffice/   console da Blan (admin.<domínio>) — a criar
+  backoffice/   console da Blan (admin.<domínio>); SPA Vite, porta 5174 em dev
   api/prisma/   schema e migrações (continua aqui no MVP)
 packages/
-  entitlements/ catálogo de módulos e checagens puras — a criar
-  connectors/   interface de conector, executor de sync, conector Uappi — a criar (absorve uappi-sync)
+  entitlements/ catálogo de módulos e checagens puras
+  connectors/   interface de conector, executor de sync, conector Uappi (absorveu o antigo uappi-sync)
   uappi-client/ cliente HTTP da Uappi; só packages/connectors importa
   mcp-core/     McpPool, MetricGateway, cache
   mcp-*/        MCP servers por fonte: commerce, ga4, behavior, firebase, quality, sprint
@@ -144,8 +147,15 @@ pnpm db:seed                         # admin@center.local / center-dev-123
 node dist/scripts/seed-demo.js       # dados de demonstração (MOCK_EXTERNAL_APIS="true")
 node dist/scripts/eval-agent.js      # avaliação pontuada do agente
 pnpm start                           # painel em http://localhost:3333
-pnpm --filter @center/web dev        # frontend com hot reload (5173)
+pnpm --filter @center/web dev        # painel do cliente com hot reload (5173)
+pnpm --filter @center/backoffice dev # back-office da Blan com hot reload (5174)
+OPERATOR_EMAIL=... OPERATOR_NAME=... OPERATOR_PASSWORD=...   node dist/scripts/create-operator.js   # primeiro operador (TOTP no 1º login)
+node dist/scripts/migrate-to-multitenant.js  # migração de dados (instalações antigas)
 ```
+
+`pnpm db:seed` cria o cliente `org_dev` (7 módulos), o Admin e, fora de
+produção, o operador `operator@center.local` / `center-dev-123`. O roteiro de
+primeiro acesso ao back-office está no [README](README.md).
 
 Armadilhas reais (detalhes em [README.md](README.md)):
 - Nada lê o `.env` sozinho; carregue-o no terminal antes de rodar a API ou o
@@ -154,6 +164,14 @@ Armadilhas reais (detalhes em [README.md](README.md)):
   `--experimental-strip-types` quebram no Node 22; use os compilados em
   `dist/`.
 - `MOCK_EXTERNAL_APIS` só liga com a string exata `"true"`.
+- `OPERATOR_JWT_SECRET` é obrigatória (32+ caracteres, diferente de `JWT_SECRET`);
+  `CREDENTIALS_ENCRYPTION_KEY` precisa de 64 hex e vem vazia no `.env.example`;
+  `ANTHROPIC_API_KEY` é obrigatória até em modo mock.
+- No compose de produção, até `down`/`ps`/`logs` exigem `OPERATOR_JWT_SECRET`
+  definida (`${...:?}`).
+- Os pedidos do `seed-demo` são de julho/2026: fora da janela de backfill
+  (`SYNC_BACKFILL_DAYS`, padrão 90) o sync termina com 0 pedidos; use
+  `SYNC_BACKFILL_DAYS=730` (detalhes no README).
 
 ## Como trabalhar aqui
 

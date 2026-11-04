@@ -1,25 +1,22 @@
 # Deploy
 
-> **Arquitetura em transição.** Este guia descreve o deploy atual (uma API que
-> serve o painel, um worker de sync e o worker de WhatsApp). No alvo aprovado em
-> 2026-10-29 ([design](superpowers/specs/2026-10-29-multi-tenant-modular-design.md)):
->
-> - Dois frontends com build próprio: painel do cliente em `app.<domínio>` e
->   back-office da Blan em `admin.<domínio>`.
-> - A mesma API atende `/api/*` (cliente) e `/internal/*` (operador), com CORS
->   separado (`PANEL_ORIGIN`, `BACKOFFICE_ORIGIN`) e segredo de token próprio
->   para operadores (`OPERATOR_JWT_SECRET`).
-> - Variável global nova: `MONDAY_API_TOKEN`. As `WHATSAPP_*` deixam de ser
->   obrigatórias e o serviço `whatsapp` sai do compose padrão.
-> - Na primeira subida da versão multi-tenant, depois do `prisma migrate
->   deploy`, roda-se uma vez o script de dados `migrate-to-multitenant`
->   (idempotente), que move as integrações da organização atual para a tabela
->   `Integration` e ativa todos os módulos para ela.
-> - O back-office é servido por um container estático próprio
->   (`admin.<domínio>`) e chama a API pela URL absoluta.
-> - O provisionamento passa a ser: script `create-operator` para o primeiro
->   operador e, depois, tudo pelo back-office (clientes, módulos, integrações e
->   o primeiro Admin de cada cliente).
+A arquitetura é multi-tenant e modular ([design](superpowers/specs/2026-10-29-multi-tenant-modular-design.md)).
+O compose de produção sobe:
+
+- `api`: Fastify, atende `/api/*` (cliente) e `/internal/*` (operador), serve o
+  painel do cliente compilado e roda `prisma migrate deploy` antes de iniciar;
+- `sync`: worker de sincronização dos conectores de e-commerce;
+- `backoffice`: container estático (nginx) com o console da Blan, em
+  `admin.<domínio>`, que chama a API pela URL absoluta;
+- `postgres` e `redis`;
+- `whatsapp`: só com `--profile whatsapp` (fora do MVP).
+
+Variáveis específicas desta arquitetura: `OPERATOR_JWT_SECRET` (segredo dos
+tokens de operador, 32+ caracteres e diferente de `JWT_SECRET`),
+`PANEL_ORIGIN` e `BACKOFFICE_ORIGIN` (CORS; precisam bater com as URLs públicas
+do painel e do back-office), `MONDAY_API_TOKEN` (global da Blan),
+`BACKOFFICE_API_URL` (build do back-office), `API_BIND`/`BACKOFFICE_BIND` e
+`ENV_FILE`. As `WHATSAPP_*` são opcionais.
 
 ## Staging
 
@@ -35,7 +32,7 @@ do Postgres. Em staging/produção reais, use valores gerados, não o `center`/`
 do exemplo local. Os campos `DATABASE_URL`/`REDIS_URL` do mesmo `.env` continuam
 preenchidos (são usados por `docker-compose.yml`, o compose de desenvolvimento local,
 onde as portas do Postgres/Redis são publicadas no host e `localhost` funciona), mas
-dentro dos containers `api`/`sync`/`whatsapp` deste compose de produção eles são
+dentro dos containers `api`/`sync` (e `whatsapp`, se ligado) deste compose de produção eles são
 **sobrescritos** por um bloco `environment:` que aponta para `postgres:5432` e
 `redis:6379` — os nomes de serviço na rede interna do Compose, os únicos endereços
 que os containeres irmãos realmente enxergam. Isso evita depender de manter dois
@@ -44,6 +41,12 @@ cenários (local vs. este compose).
 
 O serviço `api` roda `prisma migrate deploy` antes de iniciar, então a migração
 acontece no deploy sem passo manual.
+
+⚠️ **`OPERATOR_JWT_SECRET` precisa estar definida em qualquer comando do compose de
+produção**, não só no `up`: o arquivo usa `${OPERATOR_JWT_SECRET:?...}`, e o
+Compose avalia isso ao ler o arquivo. Até `docker compose -f docker-compose.prod.yml
+down`, `ps` ou `logs` falham com "defina OPERATOR_JWT_SECRET" se ela não estiver no
+`.env` (ou no `--env-file`) daquele comando.
 
 **Serviços e portas.** O compose sobe também o `backoffice` (nginx estático com o
 console da Blan, porta `8080`). A imagem dele é construída com a URL da API embutida:
@@ -78,29 +81,48 @@ endpoint de detalhe da Uappi. É esperado. Acompanhe:
 docker compose -f docker-compose.prod.yml logs -f sync
 ```
 
-## Provisionamento do primeiro operador e dos clientes
+## Provisionamento: migração de dados, primeiro operador e back-office
 
-`prisma migrate deploy` (rodado automaticamente pelo serviço `api` acima) só cria o
-schema — o banco continua **vazio**. Crie o primeiro operador da Blan, uma única
-vez, contra o serviço `api` já em pé:
+`prisma migrate deploy` (rodado pelo serviço `api` acima) só cria o schema: num
+banco novo ele continua **vazio**.
+
+**1. Instalação existente (uma organização com Uappi embutida).** Depois que a
+migração `multitenant_foundation` for aplicada e **antes** de publicar a versão que
+contém a migração que apaga as colunas antigas (próxima seção), rode uma vez o
+script de dados, idempotente:
 
 ```bash
-docker compose -f docker-compose.prod.yml exec \
-  -e OPERATOR_EMAIL="voce@suaempresa.com" \
-  -e OPERATOR_NAME="Seu Nome" \
-  -e OPERATOR_PASSWORD="escolha uma senha forte" \
-  api node dist/scripts/create-operator.js
+docker compose -f docker-compose.prod.yml exec api node dist/scripts/migrate-to-multitenant.js
 ```
 
-O operador entra no back-office (`admin.<domínio>`; o TOTP é cadastrado no primeiro
-login), cria o cliente, suas integrações e módulos, e cria o Admin do cliente com
-senha provisória. O antigo `provision-admin` foi removido.
+Ele preenche o `slug` dos clientes, move as integrações (Uappi, GA4, Play, App
+Store, board do Monday) das colunas de `Organization` para a tabela `Integration`,
+cifrando as credenciais com a `CREDENTIALS_ENCRYPTION_KEY`, e ativa os 7 módulos
+para os clientes existentes. Imprime um relatório JSON com `warnings` (por exemplo,
+"defina `MONDAY_API_TOKEN`"): leia-os. Num banco novo não há o que migrar.
 
-## Remoção das colunas antigas (Task 21)
+**2. Primeiro operador da Blan**, uma única vez, contra o serviço `api` já em pé:
+
+```bash
+docker compose -f docker-compose.prod.yml exec   -e OPERATOR_EMAIL="voce@suaempresa.com"   -e OPERATOR_NAME="Seu Nome"   -e OPERATOR_PASSWORD="escolha uma senha forte"   api node dist/scripts/create-operator.js
+```
+
+O `db:seed` (que cria o operador `operator@center.local` e o Admin
+`admin@center.local`, com senha publicada) é só para desenvolvimento: **não rode em
+produção**.
+
+**3. Back-office** (`admin.<domínio>`). O operador entra, cadastra o TOTP no primeiro
+login (QR code ou segredo no app autenticador), cria o cliente, ativa os módulos,
+configura as integrações e cria o Admin do cliente com senha provisória (a troca é
+exigida no primeiro acesso). Roteiro completo em
+[rodar-local.md](rodar-local.md#parte-2--back-office-primeiro-acesso). O antigo
+`provision-admin` foi removido.
+
+## Remoção das colunas antigas
 
 A migração `20261115000000_drop_legacy_org_integration_columns` apaga de
 `Organization` as colunas de integração (Uappi, GA4, Play, App Store, Monday,
-`statusMapping`). **É irreversível.** Como o container `api` roda
+`statusMapping`). **É irreversível** (é a única migração do projeto que remove colunas). Como o container `api` roda
 `prisma migrate deploy` ao subir, o `migrate-to-multitenant` precisa ter rodado
 com sucesso no ambiente ANTES de publicar a versão que contém esta migração.
 
@@ -142,7 +164,6 @@ runbook `docs/checkout-attribution.md`) fica na mesma origem, em
 ```bash
 curl -f http://localhost:3333/health
 docker compose -f docker-compose.prod.yml exec api node dist/scripts/health-report.js
-docker compose -f docker-compose.prod.yml logs whatsapp | grep "worker do WhatsApp em execução"
 ```
 
 ## O que monitorar
@@ -177,5 +198,6 @@ git checkout <tag-anterior>
 docker compose -f docker-compose.prod.yml up -d --build
 ```
 
-Migrações do Prisma são aditivas neste projeto (nenhuma coluna é removida), então
-voltar o código não exige reverter o banco.
+As migrações do Prisma são aditivas, com **uma exceção**: a que remove as colunas
+antigas de `Organization` (seção acima). Voltar o código para uma versão anterior a
+ela exige restaurar o backup do banco; para as demais, voltar o código basta.
